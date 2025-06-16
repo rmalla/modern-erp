@@ -1,0 +1,195 @@
+{% extends 'base.html' %}
+
+{% block title %}Sales Dashboard - Modern ERP{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <h1><i class="fas fa-tachometer-alt"></i> Sales Dashboard</h1>
+        <p class="text-muted">Overview of your sales operations</p>
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card card-stat">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">Pending Orders</h6>
+                        <h3 class="mb-0">{{ stats.total_pending }}</h3>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-clock fa-2x text-primary"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card card-stat warning">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">In Progress</h6>
+                        <h3 class="mb-0">{{ stats.total_in_progress }}</h3>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-cog fa-2x text-warning"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card card-stat danger">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">Need PO</h6>
+                        <h3 class="mb-0">{{ stats.total_needing_po }}</h3>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-shopping-cart fa-2x text-danger"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-3">
+        <div class="card card-stat success">
+            <div class="card-body">
+                <div class="d-flex justify-content-between">
+                    <div>
+                        <h6 class="card-title text-muted">Ready to Ship</h6>
+                        <h3 class="mb-0">{{ stats.total_ready_to_ship }}</h3>
+                    </div>
+                    <div class="align-self-center">
+                        <i class="fas fa-truck fa-2x text-success"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Quick Actions -->
+<div class="row mb-4">
+    <div class="col-12">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-bolt"></i> Quick Actions</h5>
+            </div>
+            <div class="card-body">
+                <a href="{% url 'sales:order_intake' %}" class="btn btn-primary btn-lg me-2">
+                    <i class="fas fa-plus"></i> New Customer Order
+                </a>
+                <a href="{% url 'sales:purchase_requirements' %}" class="btn btn-warning btn-lg me-2">
+                    <i class="fas fa-list"></i> Purchase Requirements
+                </a>
+                <a href="{% url 'admin:sales_salesorder_changelist' %}" class="btn btn-info btn-lg">
+                    <i class="fas fa-list"></i> All Sales Orders
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="row">
+    <!-- Pending Orders -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-clock"></i> Recent Pending Orders</h5>
+            </div>
+            <div class="card-body">
+                {% if pending_orders %}
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Order #</th>
+                                    <th>Customer</th>
+                                    <th>Date</th>
+                                    <th>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for order in pending_orders %}
+                                <tr>
+                                    <td>
+                                        <a href="{% url 'sales:order_detail' order.id %}">
+                                            {{ order.document_no }}
+                                        </a>
+                                    </td>
+                                    <td>{{ order.business_partner.name|truncatechars:20 }}</td>
+                                    <td>{{ order.date_ordered|date:"M d" }}</td>
+                                    <td>${{ order.grand_total.amount|floatformat:0 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-muted">No pending orders</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Orders Needing Purchase Orders -->
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-shopping-cart"></i> Orders Needing Purchase Orders</h5>
+            </div>
+            <div class="card-body">
+                {% if orders_needing_po %}
+                    <div class="table-responsive">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Order #</th>
+                                    <th>Customer</th>
+                                    <th>Vendors</th>
+                                    <th>Action</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in orders_needing_po %}
+                                <tr>
+                                    <td>
+                                        <a href="{% url 'sales:order_detail' item.order.id %}">
+                                            {{ item.order.document_no }}
+                                        </a>
+                                    </td>
+                                    <td>{{ item.order.business_partner.name|truncatechars:15 }}</td>
+                                    <td>
+                                        <span class="badge bg-info">{{ item.vendors_needed }} vendor{{ item.vendors_needed|pluralize }}</span>
+                                        {% if item.items_without_vendor %}
+                                            <span class="badge bg-danger">{{ item.items_without_vendor }} missing</span>
+                                        {% endif %}
+                                    </td>
+                                    <td>
+                                        <a href="{% url 'sales:order_detail' item.order.id %}" class="btn btn-sm btn-outline-primary">
+                                            <i class="fas fa-eye"></i>
+                                        </a>
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                {% else %}
+                    <p class="text-muted">No orders needing purchase orders</p>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}

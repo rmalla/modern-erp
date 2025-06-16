@@ -1,0 +1,227 @@
+{% extends 'base.html' %}
+
+{% block title %}New Customer Order - Modern ERP{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <h1><i class="fas fa-plus-circle"></i> New Customer Order</h1>
+        <p class="text-muted">Quick order intake form</p>
+    </div>
+</div>
+
+<div class="row">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-file-alt"></i> Order Information</h5>
+            </div>
+            <div class="card-body">
+                <form method="post" id="orderForm">
+                    {% csrf_token %}
+                    
+                    <!-- Customer and Basic Info -->
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="customer" class="form-label">Customer *</label>
+                            <select class="form-select" name="customer" id="customer" required>
+                                <option value="">Select Customer...</option>
+                                {% for customer in customers %}
+                                    <option value="{{ customer.id }}">{{ customer.name }}</option>
+                                {% endfor %}
+                            </select>
+                        </div>
+                        <div class="col-md-6">
+                            <label for="customer_po" class="form-label">Customer PO #</label>
+                            <input type="text" class="form-control" name="customer_po" id="customer_po" 
+                                   placeholder="Customer's purchase order number">
+                        </div>
+                    </div>
+                    
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <label for="date_needed" class="form-label">Date Needed</label>
+                            <input type="date" class="form-control" name="date_needed" id="date_needed">
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="ship_to_address" class="form-label">Ship To Address</label>
+                        <textarea class="form-control" name="ship_to_address" id="ship_to_address" rows="3"
+                                  placeholder="Shipping address (leave blank to use customer default)"></textarea>
+                    </div>
+                    
+                    <!-- Order Lines -->
+                    <div class="mb-3">
+                        <div class="d-flex justify-content-between align-items-center mb-2">
+                            <label class="form-label"><strong>Order Items</strong></label>
+                            <button type="button" class="btn btn-sm btn-success" onclick="addOrderLine()">
+                                <i class="fas fa-plus"></i> Add Item
+                            </button>
+                        </div>
+                        
+                        <div id="orderLines">
+                            <!-- Order lines will be added here dynamically -->
+                        </div>
+                    </div>
+                    
+                    <input type="hidden" name="item_count" id="itemCount" value="0">
+                    
+                    <!-- Submit Buttons -->
+                    <div class="d-flex justify-content-between">
+                        <a href="{% url 'sales:dashboard' %}" class="btn btn-secondary">
+                            <i class="fas fa-times"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-save"></i> Create Sales Order
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-4">
+        <!-- Help Card -->
+        <div class="card">
+            <div class="card-header">
+                <h6><i class="fas fa-info-circle"></i> Quick Help</h6>
+            </div>
+            <div class="card-body">
+                <ul class="list-unstyled small">
+                    <li><i class="fas fa-check text-success"></i> Select customer from dropdown</li>
+                    <li><i class="fas fa-check text-success"></i> Add customer's PO number if available</li>
+                    <li><i class="fas fa-check text-success"></i> Use product search to find items</li>
+                    <li><i class="fas fa-check text-success"></i> System will auto-generate purchase orders for vendor items</li>
+                </ul>
+            </div>
+        </div>
+        
+        <!-- Product Search -->
+        <div class="card mt-3">
+            <div class="card-header">
+                <h6><i class="fas fa-search"></i> Product Search</h6>
+            </div>
+            <div class="card-body">
+                <input type="text" class="form-control" id="productSearch" 
+                       placeholder="Search products..." autocomplete="off">
+                <div id="productResults" class="mt-2"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let itemCounter = 0;
+
+function addOrderLine(productCode = '', productName = '', quantity = 1) {
+    const container = document.getElementById('orderLines');
+    const lineDiv = document.createElement('div');
+    lineDiv.className = 'border rounded p-3 mb-3';
+    lineDiv.id = `line_${itemCounter}`;
+    
+    lineDiv.innerHTML = `
+        <div class="row">
+            <div class="col-md-4">
+                <label class="form-label">Product Code *</label>
+                <input type="text" class="form-control" name="item_${itemCounter}_product_code" 
+                       value="${productCode}" placeholder="Enter product code" required>
+            </div>
+            <div class="col-md-3">
+                <label class="form-label">Quantity *</label>
+                <input type="number" class="form-control" name="item_${itemCounter}_quantity" 
+                       value="${quantity}" min="0.01" step="0.01" required>
+            </div>
+            <div class="col-md-4">
+                <label class="form-label">Notes</label>
+                <input type="text" class="form-control" name="item_${itemCounter}_notes" 
+                       placeholder="Special instructions">
+            </div>
+            <div class="col-md-1">
+                <label class="form-label">&nbsp;</label>
+                <button type="button" class="btn btn-danger btn-sm d-block" 
+                        onclick="removeOrderLine('line_${itemCounter}')">
+                    <i class="fas fa-trash"></i>
+                </button>
+            </div>
+        </div>
+        ${productName ? `<small class="text-muted">${productName}</small>` : ''}
+    `;
+    
+    container.appendChild(lineDiv);
+    itemCounter++;
+    updateItemCount();
+}
+
+function removeOrderLine(lineId) {
+    const line = document.getElementById(lineId);
+    if (line) {
+        line.remove();
+        updateItemCount();
+    }
+}
+
+function updateItemCount() {
+    const lines = document.querySelectorAll('#orderLines > div');
+    document.getElementById('itemCount').value = lines.length;
+}
+
+// Product search functionality
+let searchTimeout;
+document.getElementById('productSearch').addEventListener('input', function(e) {
+    clearTimeout(searchTimeout);
+    const query = e.target.value.trim();
+    
+    if (query.length < 2) {
+        document.getElementById('productResults').innerHTML = '';
+        return;
+    }
+    
+    searchTimeout = setTimeout(() => {
+        fetch(`{% url 'sales:ajax_product_search' %}?q=${encodeURIComponent(query)}`)
+            .then(response => response.json())
+            .then(data => {
+                const resultsDiv = document.getElementById('productResults');
+                if (data.products.length > 0) {
+                    let html = '<div class="list-group">';
+                    data.products.forEach(product => {
+                        html += `
+                            <a href="#" class="list-group-item list-group-item-action" 
+                               onclick="addProductToOrder('${product.code}', '${product.name}')">
+                                <div class="fw-bold">${product.code}</div>
+                                <small>${product.name}</small>
+                                ${product.has_vendor ? '<span class="badge bg-success ms-1">Has Vendor</span>' : '<span class="badge bg-warning ms-1">No Vendor</span>'}
+                            </a>
+                        `;
+                    });
+                    html += '</div>';
+                    resultsDiv.innerHTML = html;
+                } else {
+                    resultsDiv.innerHTML = '<small class="text-muted">No products found</small>';
+                }
+            })
+            .catch(error => {
+                console.error('Product search error:', error);
+            });
+    }, 300);
+});
+
+function addProductToOrder(productCode, productName) {
+    addOrderLine(productCode, productName, 1);
+    document.getElementById('productSearch').value = '';
+    document.getElementById('productResults').innerHTML = '';
+}
+
+// Add initial line
+addOrderLine();
+
+// Set default date to 7 days from now
+const dateNeeded = document.getElementById('date_needed');
+const defaultDate = new Date();
+defaultDate.setDate(defaultDate.getDate() + 7);
+dateNeeded.value = defaultDate.toISOString().split('T')[0];
+</script>
+{% endblock %}
