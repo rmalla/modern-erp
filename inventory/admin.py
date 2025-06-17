@@ -7,6 +7,18 @@ from django.utils.html import format_html
 from . import models
 
 
+@admin.register(models.Manufacturer)
+class ManufacturerAdmin(admin.ModelAdmin):
+    list_display = ('code', 'name', 'brand_name', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('code', 'name', 'brand_name', 'description')
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('code', 'name', 'brand_name', 'description')
+        }),
+    )
+
+
 @admin.register(models.ProductCategory)
 class ProductCategoryAdmin(admin.ModelAdmin):
     list_display = ('code', 'name', 'parent', 'is_active')
@@ -24,33 +36,48 @@ class ProductCategoryAdmin(admin.ModelAdmin):
 
 @admin.register(models.Product)
 class ProductAdmin(admin.ModelAdmin):
-    list_display = ('code', 'name', 'product_type', 'product_category', 'list_price', 'is_sold', 'is_purchased', 'is_stocked', 'is_active')
-    list_filter = ('product_type', 'product_category', 'is_sold', 'is_purchased', 'is_stocked', 'is_active')
-    search_fields = ('code', 'name', 'description', 'vendor_product_no')
+    list_display = ('manufacturer_part_number', 'name', 'manufacturer', 'product_type', 'list_price', 'is_active')
+    list_filter = ('manufacturer', 'product_type', 'is_active')
+    search_fields = ('manufacturer_part_number', 'name', 'short_description', 'description')
     fieldsets = (
+        ('Product ID', {
+            'fields': (
+                ('id',),
+            )
+        }),
+        ('Manufacturer', {
+            'fields': (
+                ('manufacturer',),
+                ('manufacturer_part_number',),
+            )
+        }),
         ('Basic Information', {
-            'fields': ('code', 'name', 'description', 'product_type', 'product_category')
+            'fields': (
+                ('name',),
+                ('short_description',),
+                ('description',),
+                ('product_type', 'uom'),
+            )
         }),
         ('Physical Properties', {
-            'fields': ('uom', 'weight', 'volume')
-        }),
-        ('Flags', {
-            'fields': ('is_sold', 'is_purchased', 'is_stocked', 'is_bill_of_materials', 'is_verification_required', 'is_drop_ship')
+            'fields': (
+                ('weight', 'volume'),
+            )
         }),
         ('Pricing', {
-            'fields': ('list_price', 'standard_cost')
-        }),
-        ('Inventory', {
-            'fields': ('shelf_life_days', 'min_stock_level', 'max_stock_level')
-        }),
-        ('Vendor Information', {
-            'fields': ('default_vendor', 'vendor_product_no')
+            'fields': (
+                ('list_price', 'standard_cost'),
+            )
         }),
         ('Accounting', {
-            'fields': ('tax_category', 'asset_account', 'expense_account', 'revenue_account')
+            'fields': (
+                ('tax_category',),
+                ('asset_account', 'expense_account'),
+                ('revenue_account',),
+            )
         }),
     )
-    readonly_fields = ('current_stock',)
+    readonly_fields = ('id', 'current_stock')
     
     def current_stock(self, obj):
         return obj.current_stock
@@ -78,8 +105,8 @@ class WarehouseAdmin(admin.ModelAdmin):
 @admin.register(models.StorageDetail)
 class StorageDetailAdmin(admin.ModelAdmin):
     list_display = ('product', 'warehouse', 'quantity_on_hand', 'quantity_reserved', 'quantity_ordered', 'quantity_available_display', 'date_last_inventory')
-    list_filter = ('warehouse', 'product__product_category')
-    search_fields = ('product__code', 'product__name', 'warehouse__name')
+    list_filter = ('warehouse', 'product__manufacturer')
+    search_fields = ('product__manufacturer_part_number', 'product__name', 'warehouse__name')
     readonly_fields = ('quantity_available',)
     
     def quantity_available_display(self, obj):
@@ -128,5 +155,5 @@ class ProductPriceInline(admin.TabularInline):
 @admin.register(models.ProductPrice)
 class ProductPriceAdmin(admin.ModelAdmin):
     list_display = ('product', 'price_list_version', 'list_price', 'standard_price', 'limit_price')
-    list_filter = ('price_list_version__price_list', 'product__product_category')
-    search_fields = ('product__code', 'product__name', 'price_list_version__name')
+    list_filter = ('price_list_version__price_list', 'product__manufacturer')
+    search_fields = ('product__manufacturer_part_number', 'product__name', 'price_list_version__name')

@@ -1,0 +1,107 @@
+{% extends "admin/base.html" %}
+
+{% block extrahead %}
+{{ block.super }}
+<style>
+/* Modern ERP Admin Styling - Very specific to avoid breaking inline forms */
+
+/* ONLY target main fieldsets, NOT inline forms */
+.change-form fieldset.module:not(.inline-group) {
+    border: 1px solid #e1e4e8;
+    border-radius: 6px;
+    padding: 20px;
+    margin-bottom: 25px;
+}
+
+.change-form fieldset.module:not(.inline-group) h2 {
+    background: #f8f9fa;
+    margin: -20px -20px 15px -20px;
+    padding: 12px 20px;
+    border-bottom: 1px solid #e1e4e8;
+    font-size: 14px;
+    font-weight: 600;
+    color: #24292e;
+}
+
+/* ONLY apply 2-column layout to main form fieldsets */
+.change-form fieldset.module:not(.inline-group) .form-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 20px;
+    margin-bottom: 15px;
+}
+
+.change-form fieldset.module:not(.inline-group) .form-row > div {
+    flex: 1;
+    min-width: 0;
+}
+
+/* Single field rows should not use flex */
+.change-form fieldset.module:not(.inline-group) .form-row:has(> div:only-child) {
+    display: block;
+}
+
+/* Style main form inputs */
+.change-form fieldset.module:not(.inline-group) .form-row input,
+.change-form fieldset.module:not(.inline-group) .form-row select,
+.change-form fieldset.module:not(.inline-group) .form-row textarea {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+}
+
+.change-form fieldset.module:not(.inline-group) .form-row label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 600;
+    color: #333;
+}
+
+/* COMPLETELY AVOID styling inline forms - let Django handle them */
+.inline-group {
+    /* Use 100% default Django styling */
+}
+
+.inline-group .tabular {
+    /* Use 100% default Django styling */
+}
+
+.inline-group .tabular table {
+    /* Use 100% default Django styling */
+}
+
+.inline-group .form-row {
+    /* Use 100% default Django styling - override any inherited flex */
+    display: table-row !important;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .change-form fieldset.module:not(.inline-group) .form-row {
+        flex-direction: column;
+        gap: 10px;
+    }
+    
+    .change-form fieldset.module:not(.inline-group) .form-row > div {
+        flex: none;
+        width: 100%;
+    }
+}
+
+/* Help text styling */
+.help {
+    font-size: 11px;
+    color: #666;
+    margin-top: 2px;
+}
+
+/* Readonly field styling */
+.readonly {
+    background-color: #f8f9fa;
+    border-color: #e9ecef;
+    color: #6c757d;
+}
+</style>
+{% endblock %}

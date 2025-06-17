@@ -8,7 +8,7 @@ from django.db import models
 from django.core.validators import MinValueValidator
 from djmoney.models.fields import MoneyField
 from decimal import Decimal
-from core.models import BaseModel, Organization, BusinessPartner, NumberSequence
+from core.models import BaseModel, Organization, BusinessPartner, NumberSequence, Opportunity, PaymentTerms, Incoterms, Contact, BusinessPartnerLocation
 from inventory.models import Product, Warehouse, PriceList
 
 
@@ -39,16 +39,40 @@ class PurchaseOrder(BaseModel):
     date_promised = models.DateField(null=True, blank=True)
     date_received = models.DateField(null=True, blank=True)
     
-    # Vendor information
+    # Vendor and contact information
     business_partner = models.ForeignKey(BusinessPartner, on_delete=models.PROTECT, limit_choices_to={'is_vendor': True})
+    contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True,
+                               help_text="Vendor contact for this purchase order")
+    internal_user = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name='purchase_orders_as_internal_contact',
+                                     help_text="Our company contact handling this purchase order")
     vendor_reference = models.CharField(max_length=100, blank=True, help_text="Vendor's PO number")
-    bill_to_address = models.TextField(blank=True)
-    ship_to_address = models.TextField(blank=True)
+    
+    # Address information
+    business_partner_location = models.ForeignKey(BusinessPartnerLocation, on_delete=models.SET_NULL,
+                                                 null=True, blank=True,
+                                                 help_text="Primary vendor address")
+    bill_to_location = models.ForeignKey(BusinessPartnerLocation, on_delete=models.SET_NULL,
+                                        null=True, blank=True, related_name='purchase_orders_bill_to',
+                                        help_text="Billing address")
+    ship_to_location = models.ForeignKey(BusinessPartnerLocation, on_delete=models.SET_NULL,
+                                        null=True, blank=True, related_name='purchase_orders_ship_to',
+                                        help_text="Shipping address")
+    
+    # Legacy address fields (for backward compatibility)
+    bill_to_address = models.TextField(blank=True, help_text="Legacy billing address text")
+    ship_to_address = models.TextField(blank=True, help_text="Legacy shipping address text")
+    
+    # Opportunity tracking
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name='purchase_orders', help_text="Related opportunity (Q #XXXXXX)")
     
     # Pricing and terms
     price_list = models.ForeignKey(PriceList, on_delete=models.PROTECT, limit_choices_to={'is_purchase_price_list': True})
     currency = models.ForeignKey('core.Currency', on_delete=models.PROTECT)
-    payment_terms = models.CharField(max_length=100, default='Net 30')
+    payment_terms = models.ForeignKey(PaymentTerms, on_delete=models.PROTECT, null=True, blank=True)
+    incoterms = models.ForeignKey(Incoterms, on_delete=models.PROTECT, null=True, blank=True)
+    incoterms_location = models.CharField(max_length=200, blank=True, help_text="Location for incoterms (e.g., 'Miami Port' for EXW Miami Port)")
     
     # Totals
     total_lines = MoneyField(max_digits=15, decimal_places=2, default_currency='USD', default=0)
@@ -171,6 +195,10 @@ class VendorBill(BaseModel):
     # Reference to purchase order
     purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.SET_NULL, null=True, blank=True)
     
+    # Opportunity tracking
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name='vendor_bills', help_text="Related opportunity (Q #XXXXXX)")
+    
     # Pricing and terms
     price_list = models.ForeignKey(PriceList, on_delete=models.PROTECT, limit_choices_to={'is_purchase_price_list': True})
     currency = models.ForeignKey('core.Currency', on_delete=models.PROTECT)
@@ -277,6 +305,10 @@ class Receipt(BaseModel):
     
     # Reference to purchase order
     purchase_order = models.ForeignKey(PurchaseOrder, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Opportunity tracking
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name='receipts', help_text="Related opportunity (Q #XXXXXX)")
     
     # Shipping information
     delivery_via = models.CharField(max_length=100, blank=True)

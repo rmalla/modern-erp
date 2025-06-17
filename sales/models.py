@@ -8,7 +8,7 @@ from django.db import models
 from django.core.validators import MinValueValidator
 from djmoney.models.fields import MoneyField
 from decimal import Decimal
-from core.models import BaseModel, Organization, BusinessPartner, NumberSequence
+from core.models import BaseModel, Organization, BusinessPartner, NumberSequence, Opportunity, PaymentTerms, Incoterms, Contact, BusinessPartnerLocation
 from inventory.models import Product, Warehouse, PriceList
 
 
@@ -42,15 +42,39 @@ class SalesOrder(BaseModel):
     # Customer reference
     customer_po_reference = models.CharField(max_length=100, blank=True, help_text="Customer's PO number")
     
-    # Business partner information
+    # Business partner and contact information
     business_partner = models.ForeignKey(BusinessPartner, on_delete=models.PROTECT, limit_choices_to={'is_customer': True})
-    bill_to_address = models.TextField(blank=True)
-    ship_to_address = models.TextField(blank=True)
+    contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, 
+                               help_text="Customer contact for this order")
+    internal_user = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name='sales_orders_as_internal_contact',
+                                     help_text="Our company contact handling this order")
+    
+    # Address information
+    business_partner_location = models.ForeignKey(BusinessPartnerLocation, on_delete=models.SET_NULL, 
+                                                 null=True, blank=True, 
+                                                 help_text="Primary address for this order")
+    bill_to_location = models.ForeignKey(BusinessPartnerLocation, on_delete=models.SET_NULL, 
+                                        null=True, blank=True, related_name='sales_orders_bill_to',
+                                        help_text="Billing address")
+    ship_to_location = models.ForeignKey(BusinessPartnerLocation, on_delete=models.SET_NULL, 
+                                        null=True, blank=True, related_name='sales_orders_ship_to',
+                                        help_text="Shipping address")
+    
+    # Legacy address fields (for backward compatibility)
+    bill_to_address = models.TextField(blank=True, help_text="Legacy billing address text")
+    ship_to_address = models.TextField(blank=True, help_text="Legacy shipping address text")
+    
+    # Opportunity tracking
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name='sales_orders', help_text="Related opportunity (Q #XXXXXX)")
     
     # Pricing and terms
     price_list = models.ForeignKey(PriceList, on_delete=models.PROTECT, limit_choices_to={'is_sales_price_list': True})
     currency = models.ForeignKey('core.Currency', on_delete=models.PROTECT)
-    payment_terms = models.CharField(max_length=100, default='Net 30')
+    payment_terms = models.ForeignKey(PaymentTerms, on_delete=models.PROTECT, null=True, blank=True)
+    incoterms = models.ForeignKey(Incoterms, on_delete=models.PROTECT, null=True, blank=True)
+    incoterms_location = models.CharField(max_length=200, blank=True, help_text="Location for incoterms (e.g., 'Miami Port' for EXW Miami Port)")
     
     # Totals
     total_lines = MoneyField(max_digits=15, decimal_places=2, default_currency='USD', default=0)
@@ -204,12 +228,31 @@ class Invoice(BaseModel):
     date_accounting = models.DateField()
     due_date = models.DateField()
     
-    # Business partner information
+    # Business partner and contact information
     business_partner = models.ForeignKey(BusinessPartner, on_delete=models.PROTECT, limit_choices_to={'is_customer': True})
-    bill_to_address = models.TextField(blank=True)
+    contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True,
+                               help_text="Customer contact for this invoice")
+    internal_user = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name='invoices_as_internal_contact',
+                                     help_text="Our company contact handling this invoice")
+    
+    # Address information  
+    business_partner_location = models.ForeignKey(BusinessPartnerLocation, on_delete=models.SET_NULL,
+                                                 null=True, blank=True,
+                                                 help_text="Primary address for this invoice")
+    bill_to_location = models.ForeignKey(BusinessPartnerLocation, on_delete=models.SET_NULL,
+                                        null=True, blank=True, related_name='invoices_bill_to',
+                                        help_text="Billing address")
+    
+    # Legacy address field (for backward compatibility)
+    bill_to_address = models.TextField(blank=True, help_text="Legacy billing address text")
     
     # Reference to sales order
     sales_order = models.ForeignKey(SalesOrder, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Opportunity tracking
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name='invoices', help_text="Related opportunity (Q #XXXXXX)")
     
     # Pricing and terms
     price_list = models.ForeignKey(PriceList, on_delete=models.PROTECT, limit_choices_to={'is_sales_price_list': True})
@@ -310,12 +353,27 @@ class Shipment(BaseModel):
     movement_date = models.DateField()
     date_received = models.DateField(null=True, blank=True)
     
-    # Business partner and warehouse
+    # Business partner, contact, and warehouse
     business_partner = models.ForeignKey(BusinessPartner, on_delete=models.PROTECT)
+    contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True,
+                               help_text="Customer contact for this shipment")
+    internal_user = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True,
+                                     related_name='shipments_as_internal_contact',
+                                     help_text="Our company contact handling this shipment")
+    
+    # Address information
+    business_partner_location = models.ForeignKey(BusinessPartnerLocation, on_delete=models.SET_NULL,
+                                                 null=True, blank=True,
+                                                 help_text="Ship-to address")
+    
     warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
     
     # Reference to sales order
     sales_order = models.ForeignKey(SalesOrder, on_delete=models.SET_NULL, null=True, blank=True)
+    
+    # Opportunity tracking
+    opportunity = models.ForeignKey(Opportunity, on_delete=models.SET_NULL, null=True, blank=True,
+                                  related_name='shipments', help_text="Related opportunity (Q #XXXXXX)")
     
     # Shipping information
     delivery_via = models.CharField(max_length=100, blank=True)

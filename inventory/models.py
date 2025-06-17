@@ -11,6 +11,23 @@ from decimal import Decimal
 from core.models import BaseModel, Organization, BusinessPartner, UnitOfMeasure
 
 
+class Manufacturer(BaseModel):
+    """
+    Manufacturer/Brand master data for products.
+    Simple placeholder for product attribution.
+    """
+    code = models.CharField(max_length=50, unique=True, help_text="Manufacturer code (e.g., APPLE, SAMSUNG)")
+    name = models.CharField(max_length=200, help_text="Full manufacturer name")
+    brand_name = models.CharField(max_length=200, blank=True, help_text="Brand name if different from company name")
+    description = models.TextField(blank=True)
+    
+    class Meta:
+        ordering = ['name']
+        
+    def __str__(self):
+        return self.name
+
+
 class ProductCategory(BaseModel):
     """
     Product Category for classification.
@@ -48,40 +65,24 @@ class Product(BaseModel):
     ]
     
     # Basic information
-    code = models.CharField(max_length=50, unique=True, help_text="SKU/Product Code")
     name = models.CharField(max_length=200)
-    description = models.TextField(blank=True)
+    short_description = models.TextField(blank=True, help_text="Brief product description")
+    description = models.TextField(blank=True, help_text="Detailed product description")
     product_type = models.CharField(max_length=20, choices=PRODUCT_TYPES, default='item')
-    product_category = models.ForeignKey(ProductCategory, on_delete=models.PROTECT)
     
     # Physical properties
     uom = models.ForeignKey(UnitOfMeasure, on_delete=models.PROTECT, verbose_name="Unit of Measure")
     weight = models.DecimalField(max_digits=10, decimal_places=3, default=0, validators=[MinValueValidator(0)])
     volume = models.DecimalField(max_digits=10, decimal_places=3, default=0, validators=[MinValueValidator(0)])
     
-    # Flags
-    is_sold = models.BooleanField(default=True, help_text="Can be sold")
-    is_purchased = models.BooleanField(default=True, help_text="Can be purchased")
-    is_stocked = models.BooleanField(default=True, help_text="Inventory tracked")
-    is_bill_of_materials = models.BooleanField(default=False, help_text="Has BOM")
-    is_verification_required = models.BooleanField(default=False)
-    is_drop_ship = models.BooleanField(default=False)
     
     # Pricing
-    list_price = MoneyField(max_digits=15, decimal_places=2, default_currency='USD', default=0)
-    standard_cost = MoneyField(max_digits=15, decimal_places=2, default_currency='USD', default=0)
+    list_price = MoneyField(max_digits=15, decimal_places=2, default_currency='USD', default=0, verbose_name="Price")
+    standard_cost = MoneyField(max_digits=15, decimal_places=2, default_currency='USD', default=0, verbose_name="Cost")
     
-    # Inventory
-    shelf_life_days = models.IntegerField(null=True, blank=True, help_text="Days until expiration")
-    min_stock_level = models.DecimalField(max_digits=12, decimal_places=2, default=0)
-    
-    # Vendor information
-    primary_vendor = models.ForeignKey(BusinessPartner, on_delete=models.SET_NULL, null=True, blank=True, 
-                                     limit_choices_to={'is_vendor': True}, related_name='primary_products',
-                                     help_text="Primary vendor for this product")
-    vendor_product_code = models.CharField(max_length=100, blank=True, help_text="Vendor's SKU/Product Code")
-    lead_time_days = models.IntegerField(default=7, help_text="Lead time in days from vendor")
-    max_stock_level = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    # Manufacturer information
+    manufacturer = models.ForeignKey(Manufacturer, on_delete=models.PROTECT, null=True, blank=True, help_text="Product manufacturer/brand")
+    manufacturer_part_number = models.CharField(max_length=100, blank=True, help_text="Manufacturer's part number")
     
     # Tax and accounting
     tax_category = models.ForeignKey('accounting.TaxCategory', on_delete=models.SET_NULL, null=True, blank=True)
@@ -90,10 +91,10 @@ class Product(BaseModel):
     revenue_account = models.ForeignKey('accounting.Account', on_delete=models.SET_NULL, null=True, blank=True, related_name='products_revenue')
     
     class Meta:
-        ordering = ['code']
+        ordering = ['manufacturer_part_number', 'name']
         
     def __str__(self):
-        return f"{self.code} - {self.name}"
+        return f"{self.manufacturer_part_number} - {self.name}" if self.manufacturer_part_number else self.name
     
     @property
     def current_stock(self):
@@ -152,7 +153,7 @@ class StorageDetail(BaseModel):
         ordering = ['product', 'warehouse']
         
     def __str__(self):
-        return f"{self.product.code} @ {self.warehouse.name}"
+        return f"{self.product.manufacturer_part_number or self.product.name} @ {self.warehouse.name}"
     
     @property
     def quantity_available(self):
@@ -224,4 +225,4 @@ class ProductPrice(BaseModel):
         ordering = ['price_list_version', 'product']
         
     def __str__(self):
-        return f"{self.product.code} - {self.list_price}"
+        return f"{self.product.manufacturer_part_number or self.product.name} - {self.list_price}"

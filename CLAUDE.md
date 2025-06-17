@@ -43,22 +43,38 @@ The Modern ERP system is designed to handle a specific business workflow:
 
 - **BaseModel**: Abstract base with UUID primary keys, audit trails (created/updated timestamps and users), legacy_id for migration tracking
 - **Organization**: Multi-tenant support
-- **BusinessPartner**: Customers and vendors with flags (is_customer, is_vendor)
+- **BusinessPartner**: Customers and vendors with flags (is_customer, is_vendor) - separated from manufacturers for clean transactional vs attributional data separation
+- **Contact**: Contact persons associated with business partners - enables proper contact management per customer/vendor
+- **BusinessPartnerLocation**: Address management system - multiple addresses per business partner with address types
 - **User**: Django user extension
 - **Currency**: Multi-currency support (default: USD)
 - **UnitOfMeasure**: Product measurement units
+- **PaymentTerms**: Master data for payment terms with net days, discount days, and discount percentages
+- **Incoterms**: International commercial terms with codes, names, and descriptions
+- **Opportunity**: Central document hub linking all transactions (sales orders, purchase orders, invoices, shipments)
 
 ### 2. Sales App (`/sales/`)
 **Customer order management**
 
 #### SalesOrder Model
 - Document workflow: drafted → in_progress → waiting_payment → waiting_pickup → complete → closed
+- **Opportunity tracking**: Links to central opportunity for project management
+- **Payment terms**: Dropdown selection from PaymentTerms model
+- **Incoterms**: Dropdown selection with location field (e.g., "EXW Miami Port")
+- **Contact Management**: 
+  - `internal_user`: Our company contact handling the order
+  - `contact`: Customer contact for this order (filtered by business partner)
+- **Address Management**: Multiple address support with business partner filtering
+  - `business_partner_location`: Primary address
+  - `bill_to_location`: Billing address  
+  - `ship_to_location`: Shipping address
+  - All addresses filtered by selected business partner after save
 - Customer PO reference tracking
-- Multi-address support (bill_to, ship_to)
-- Pricing: price_list, currency, payment_terms
+- Pricing: price_list, currency
 - Delivery: warehouse, delivery_via, delivery_rule
 - Status properties: delivery_status, purchase_status
 - Totals: total_lines, grand_total
+- **Admin Layout**: 2-column layout with Contact Information and Address Information sections
 
 #### SalesOrderLine Model
 - Product or charge-based line items
@@ -70,12 +86,15 @@ The Modern ERP system is designed to handle a specific business workflow:
 #### Invoice & InvoiceLine Models
 - Standard invoicing with multiple types (standard, credit_memo, debit_memo, proforma)
 - Links to sales orders
+- **Contact Management**: Same dual-contact system as Sales Orders (internal_user + customer contact)
 - Payment tracking: paid_amount, open_amount
 - Posting flags for accounting integration
 
 #### Shipment & ShipmentLine Models
 - Delivery document management
 - Movement types: customer_shipment, customer_return
+- **Contact Management**: Same dual-contact system as Sales Orders (internal_user + customer contact)
+- **Address Management**: Business partner filtered address selection
 - Tracking numbers and freight costs
 - Quantity tracking: movement_quantity, quantity_entered
 
@@ -84,6 +103,10 @@ The Modern ERP system is designed to handle a specific business workflow:
 
 #### PurchaseOrder & PurchaseOrderLine Models
 - Vendor purchase orders with source tracking to sales orders
+- **Contact Management**: 
+  - `internal_user`: Our company contact handling the purchase order
+  - `contact`: Vendor contact for this purchase order (filtered by business partner)
+- **Address Management**: Vendor address filtering for bill_to and ship_to locations
 - Source fields: source_sales_order, source_sales_order_line
 - Vendor product mapping: vendor_product_no
 - Quantity tracking: ordered, received, invoiced
@@ -100,12 +123,24 @@ The Modern ERP system is designed to handle a specific business workflow:
 ### 4. Inventory App (`/inventory/`)
 **Product and stock management**
 
-#### Product Model
-- Comprehensive product master with categories
-- Vendor relationships: primary_vendor, vendor_product_code, lead_time_days
-- Pricing: list_price, standard_cost
-- Flags: is_purchased, is_sold, is_active
-- Stock tracking capabilities
+#### Manufacturer Model
+- **Clean separation**: Manufacturer as placeholder for product attribution (not transactional)
+- Fields: code, name, brand_name, description
+- Used for product manufacturer identification only
+
+#### Product Model (Completely Redesigned)
+- **Streamlined design**: Removed unnecessary flags and categories for cleaner data model
+- **Key fields prioritized**: Manufacturer and manufacturer part number as primary identifiers
+- **Admin organization**:
+  - Product ID: Read-only identifier at top
+  - Manufacturer: Manufacturer selection and part number grouped together
+  - Basic Information: Name, short description (text box), long description, product type, UOM
+  - Physical Properties: Weight, volume
+  - Pricing: "Price" (was list_price), "Cost" (was standard_cost)
+  - Accounting: Tax category, asset/expense/revenue accounts
+- **Removed fields**: code (replaced by manufacturer_part_number), product_category, is_purchased, is_sold, is_stocked, is_bill_of_materials, is_verification_required, is_dropshipped, min_stock_level, shelf_life_days, max_stock_level
+- **Enhanced descriptions**: Both short_description (TextField) and description for flexibility
+- **Search optimization**: All admin search fields updated to use manufacturer_part_number instead of removed code field
 
 #### Warehouse Model
 - Multiple warehouse support
@@ -121,6 +156,38 @@ The Modern ERP system is designed to handle a specific business workflow:
 - **Tax**: Tax code and rate management
 - **Account**: Chart of accounts
 - **JournalEntry**: General ledger integration (placeholder for future)
+
+## Contact and Address Management System
+
+### Architecture Overview
+**Comprehensive contact and address management system implemented across all document types**
+
+#### Key Components:
+1. **Contact Model**: Person-level contacts associated with business partners
+2. **BusinessPartnerLocation Model**: Address management with multiple addresses per business partner
+3. **Document Integration**: All sales and purchasing documents support dual-contact system
+
+#### Dual-Contact System:
+**Every document (Sales Orders, Purchase Orders, Invoices, Shipments) includes:**
+- **Internal User**: Our company contact handling the document
+- **External Contact**: Customer/vendor contact for the document
+
+#### Smart Filtering:
+- **Contact Dropdown**: Automatically filtered by selected business partner after save
+- **Address Dropdowns**: All address fields (bill_to, ship_to, etc.) filtered by business partner
+- **Admin Workflow**: Save document with business partner → Edit again → See filtered options
+
+#### Admin Interface:
+- **Contact Information Section**: Internal user + external contact dropdowns
+- **Address Information Section**: Business partner location, bill_to, ship_to addresses
+- **Help Text**: Clear instructions for users on filtering behavior
+- **Form Validation**: Prevents invalid contact/address combinations
+
+#### Implementation Details:
+- **DocumentContactForm**: Custom Django form class handling filtering logic
+- **No JavaScript**: Simple server-side filtering after document save
+- **Consistent Pattern**: Same implementation across Sales, Purchasing, and all document types
+- **User-Friendly**: Clear messaging about save-first-to-filter workflow
 
 ## Business Logic & Utilities
 
@@ -177,16 +244,24 @@ The Modern ERP system is designed to handle a specific business workflow:
 
 ## Admin Interface
 
+### Global Admin Standardization
+- **Global 2-column layout**: Implemented via `/templates/admin/base.html` for consistent styling across entire ERP system
+- **Responsive design**: Ensures fields are properly aligned and visually appealing
+- **Standardization**: Guarantees uniform user experience throughout all admin interfaces
+
 ### Django Admin Configuration
-- **Sales Orders**: Simplified admin with essential fields only
+- **Sales Orders**: Key fields prioritized at top (business partner, opportunity, dates, payment terms, incoterms)
+- **Products**: Streamlined with manufacturer and part number prominently displayed
 - **Inline editing**: Sales order lines, invoice lines, shipment lines
-- **List filters**: Status, organization, dates, amounts
-- **Search**: Document numbers, customer names, descriptions
+- **List filters**: Status, organization, dates, amounts, manufacturers
+- **Search optimization**: Updated to use manufacturer_part_number across all product references
+- **Field organization**: Logical grouping with proper section headers
 
 ### Access Issues Resolved
-- **Previous 500 errors**: Fixed by simplifying admin configuration
-- **Field mismatches**: Corrected migration script field mappings
-- **PostgreSQL cursor errors**: Resolved through admin optimization
+- **500 errors fixed**: Multiple issues resolved including payment_terms field mismatches, product field errors, staticfiles manifest issues
+- **Field alignment**: Corrected migration script field mappings and admin field references
+- **PostgreSQL integration**: Resolved cursor errors and column mismatches
+- **Search functionality**: Updated all product references from code to manufacturer_part_number
 
 ## Development & Deployment
 
@@ -231,7 +306,9 @@ journalctl -u modern-erp -f
 - Sales Order Lines: 355
 - Business Partners: 340
 - Purchase Orders: 141
-- Products: 210
+- **Products: 245** (with real data from iDempiere)
+- **Manufacturers: 71** (real companies: York, Caterpillar, Siemens, Baldor, etc.)
+- **Product Categories: 7** (Dropship, Standard, Non-Items, etc.)
 
 ### Completed Features:
 ✅ Multi-vendor purchase order generation from sales orders
@@ -240,7 +317,21 @@ journalctl -u modern-erp -f
 ✅ Sales order dashboard with status tracking
 ✅ Customer order intake forms
 ✅ Complete data migration from iDempiere
-✅ Admin interface optimization
+✅ **Opportunity-centric workflow**: Central document hub linking all transactions
+✅ **Payment terms and incoterms**: Dropdown-based selection with proper data models
+✅ **Clean data architecture**: Separated transactional (BusinessPartner) from attributional (Manufacturer) entities
+✅ **Streamlined product model**: Removed unnecessary flags and categories, prioritized manufacturer and part number
+✅ **Global admin standardization**: Consistent 2-column layout across entire system
+✅ **Enhanced product descriptions**: Flexible short and long description fields
+✅ **Database optimization**: Updated field types, labels, and search functionality
+✅ **Admin interface refinement**: Logical field grouping and visual organization
+✅ **Real product data migration**: Successfully imported 245 real products with actual names, part numbers, and 71 manufacturers from iDempiere
+✅ **Complete product catalog**: Products now have real manufacturers (York, Caterpillar, Siemens, etc.) and actual part numbers
+✅ **Pricing preservation**: Maintained all historical pricing data from sales and purchase orders
+✅ **Contact and Address Management**: Complete dual-contact system with business partner filtered dropdowns
+✅ **Document Contact Integration**: All documents (Sales, Purchase, Invoice, Shipment) support internal + external contacts
+✅ **Smart Address Filtering**: Business partner filtered address selection across all document types
+✅ **Admin Contact Sections**: Dedicated Contact Information and Address Information sections in admin
 
 ### Pending Features:
 🔄 Combined Invoice + Packing List view implementation
@@ -249,11 +340,24 @@ journalctl -u modern-erp -f
 
 ## Troubleshooting
 
-### Common Issues:
-1. **500 Errors in Admin**: Usually due to field mismatches or complex queries
+### Common Issues (Resolved):
+1. **500 Errors in Admin**: 
+   - ✅ **Fixed**: Payment terms field mismatch (payment_terms field migration)
+   - ✅ **Fixed**: Product admin field errors (default_vendor→primary_vendor, vendor_product_no→vendor_product_code)
+   - ✅ **Fixed**: Staticfiles manifest entry error for custom CSS
+   - ✅ **Fixed**: Product code field references updated to manufacturer_part_number
 2. **Migration Issues**: Check field names match model definitions
 3. **Service Won't Start**: Check virtual environment and dependencies
 4. **Database Connection**: Verify PostgreSQL service and credentials
+
+### Recent Database Schema Updates:
+- **Migrations Applied**: 7 inventory migrations including field removals, additions, and type changes
+- **PaymentTerms & Incoterms**: Added to core models with proper foreign key relationships
+- **Product Optimization**: Removed 9+ unnecessary fields, added short_description, updated field labels
+- **Search Fields**: Updated across all admin interfaces to use manufacturer_part_number
+- **Contact System**: Added Contact and BusinessPartnerLocation models with full document integration
+- **Document Contact Fields**: Added internal_user fields to all document types (Sales, Purchase, Invoice, Shipment)
+- **Address Management**: Enhanced all documents with business partner filtered address selection
 
 ### Log Locations:
 - **Django Service**: `journalctl -u modern-erp`
@@ -282,8 +386,29 @@ journalctl -u modern-erp -f
 6. **Add Email Notifications for Order Status**
 7. **Create API endpoints for external integrations**
 
+## Key Technical Achievements
+
+### Data Architecture Excellence
+- **Clean separation of concerns**: Transactional entities (BusinessPartner for vendors/customers) vs attributional data (Manufacturer for product brands)
+- **Opportunity-centric design**: Central document hub linking all business transactions for better project tracking
+- **Streamlined models**: Removed unnecessary complexity while maintaining essential business functionality
+
+### User Experience Optimization
+- **Global standardization**: Consistent 2-column layout across all admin interfaces
+- **Logical field organization**: Key information prioritized and grouped for better usability
+- **Enhanced search capabilities**: Optimized search across all models with proper field references
+
+### Database Performance & Maintainability
+- **Field optimization**: Removed 9+ unnecessary Product fields reducing database bloat
+- **Proper data types**: TextField for descriptions, proper verbose names for clarity
+- **Foreign key relationships**: Properly structured with appropriate on_delete strategies
+- **Migration strategy**: Clean, incremental migrations maintaining data integrity
+
 ---
 
-**Last Updated**: June 16, 2025
+**Last Updated**: June 17, 2025
 **System Version**: Django 4.2.11 on Ubuntu Linux
 **Database**: PostgreSQL 16 with 786 total migrated records
+**Major Features**: Contact and Address Management system implemented across all document types
+**Latest Enhancement**: Dual-contact system with business partner filtered dropdowns for contacts and addresses
+**Architecture**: Clean separation of transactional vs attributional data models with comprehensive contact management
