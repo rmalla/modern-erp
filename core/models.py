@@ -480,6 +480,36 @@ class BusinessPartnerLocation(BaseModel):
             address_lines.append(self.country)
         
         return '\n'.join(address_lines)
+    
+    @property
+    def full_address_with_name(self):
+        """Return formatted full address with customer name on top"""
+        address_lines = [self.business_partner.name]
+        
+        # Add the standard address lines
+        if self.address1:
+            address_lines.append(self.address1)
+        if self.address2:
+            address_lines.append(self.address2)
+        if self.address3:
+            address_lines.append(self.address3)
+        
+        if self.city or self.state or self.postal_code:
+            city_state_zip = []
+            if self.city:
+                city_state_zip.append(self.city)
+            if self.state:
+                city_state_zip.append(self.state)
+            if self.postal_code:
+                city_state_zip.append(self.postal_code)
+            
+            if city_state_zip:
+                address_lines.append(' '.join(city_state_zip))
+        
+        if self.country and self.country != 'United States':
+            address_lines.append(self.country)
+        
+        return '\n'.join(address_lines)
 
 
 class Contact(BaseModel):
