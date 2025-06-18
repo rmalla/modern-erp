@@ -872,9 +872,107 @@ WORKFLOW_PERMISSIONS = [
 
 ---
 
-**Last Updated**: June 18, 2025 (Evening)
+---
+
+## Development Session Summary - June 18, 2025 (Late Evening)
+
+### Session Overview
+**Invoice PDF Enhancement Session**: Updated invoice PDF generation to exactly match sales order format with separate manufacturer columns, incoterms highlighting, shipping address display, and proper contact information.
+
+### 🎯 Major Features Implemented
+
+#### **1. Enhanced Invoice PDF Format**
+**Files Modified**: `sales/views.py`
+- ✅ **Header Format**: Updated to match sales order layout with project number, incoterms, and estimated delivery
+- ✅ **Contact Information**: Now displays the actual selected customer contact and internal user from invoice
+- ✅ **Address Display**: Shows both Bill To and Ship To addresses (ship-to inherited from sales order)
+- ✅ **Incoterms Integration**: Displays incoterms from related sales order with yellow highlighting
+- ✅ **Estimated Delivery**: Shows delivery timeframe from original sales order
+
+#### **2. Product Details Enhancement**
+**Files Modified**: `sales/views.py`
+- ✅ **Separate Columns**: Product details now show in separate columns:
+  - Product (product name)
+  - Manufacturer (manufacturer name)
+  - Part Number (manufacturer part number)
+  - Description (line description)
+- ✅ **Manufacturer Display**: Shows actual manufacturer name from product.manufacturer.name
+- ✅ **Part Number Display**: Shows manufacturer_part_number in dedicated column
+- ✅ **Professional Layout**: Adjusted column widths for optimal display
+
+#### **3. Layout Improvements**
+**Files Modified**: `sales/views.py`
+- ✅ **Table Structure**: 10-column layout matching sales order format
+- ✅ **Column Widths**: Optimized for readability (0.4" to 1.5" per column)
+- ✅ **Styling**: Consistent with sales order PDF (blue header, alternating rows)
+- ✅ **Typography**: Professional fonts and sizing (8-9pt for readability)
+
+### 📊 Technical Implementation Details
+
+#### **Updated Column Structure**
+```
+Previous: [Line, Product, Description, Qty, UOM, Unit Price, Discount, Total]
+Updated:  [Line, Product, Manufacturer, Part Number, Description, Qty, UOM, Unit Price, Discount, Total]
+```
+
+#### **Header Information Enhancement**
+- **Project Number**: Shows opportunity number and name at top
+- **Invoice Details**: Number, date, due date, related sales order
+- **Payment Terms**: Displays from invoice
+- **Incoterms**: Inherited from sales order with yellow highlighting
+- **Estimated Delivery**: Shows weeks from original sales order
+
+#### **Address Integration**
+- **Bill To**: From invoice.bill_to_location
+- **Ship To**: From invoice.sales_order.ship_to_location
+- **Format**: Side-by-side layout matching sales order exactly
+
+### 🎯 Business Impact
+
+#### **Professional Documentation**
+- **Consistent Format**: Invoice PDFs now exactly match sales order format
+- **Complete Information**: All relevant details from manufacturer to shipping
+- **Visual Clarity**: Separate columns make product details easy to read
+- **Legal Compliance**: Incoterms properly highlighted and documented
+
+#### **Operational Benefits**
+- **Customer Recognition**: Same professional look across all documents
+- **Manufacturer Clarity**: Clear separation of product vs manufacturer information
+- **Shipping Visibility**: Addresses properly displayed for fulfillment
+- **Contact Accuracy**: Real selected contacts displayed (not default values)
+
+### 📋 Files Modified Summary
+1. **`sales/views.py`**: Complete invoice PDF format update (lines 823-1020)
+   - Updated header information structure
+   - Enhanced product details with separate manufacturer columns
+   - Improved address and contact display
+   - Added incoterms and delivery information integration
+
+### 🚀 Current System Status
+- **Feature Complete**: Invoice PDF now matches sales order format exactly
+- **Production Ready**: All changes deployed and service restarted
+- **Professional Output**: Invoices display manufacturer, part number, incoterms, and addresses
+- **Contact Integration**: Shows actual selected customer and internal contacts
+- **Service Status**: Running successfully at https://erp.r17a.com
+
+### 📈 Invoice System Completion
+**The invoice system is now fully aligned with the sales order system:**
+- ✅ **One-button invoice creation** from sales orders
+- ✅ **Multi-order invoice creation** functionality  
+- ✅ **Professional PDF generation** with manufacturer details
+- ✅ **Complete workflow system** with approval thresholds
+- ✅ **Legacy data migration** from iDempiere
+- ✅ **Contact information inheritance** from sales orders
+- ✅ **Incoterms and shipping address** display
+- ✅ **Manufacturer and part number** separation
+
+**The Modern ERP invoice module is now feature-complete and production-ready!**
+
+---
+
+**Last Updated**: June 18, 2025 (Late Evening)
 **System Version**: Django 4.2.11 on Ubuntu Linux  
 **Database**: PostgreSQL 16 with 786 total migrated records + Complete Workflow System
-**Major Features**: Enterprise Document Approval Workflow with Field Locking and Permission Management
-**Latest Enhancement**: Complete workflow engine with $1000 approval threshold, dynamic field locking, and visual state management
-**Architecture**: Clean separation of transactional vs attributional data with comprehensive workflow control system
+**Major Features**: Enterprise Document Approval Workflow with Field Locking and Permission Management + Professional Invoice PDF Generation
+**Latest Enhancement**: Invoice PDF format updated to exactly match sales order with manufacturer columns, incoterms highlighting, and complete address display
+**Architecture**: Clean separation of transactional vs attributional data with comprehensive workflow control system and professional document generation

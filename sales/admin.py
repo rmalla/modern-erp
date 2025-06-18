@@ -11,6 +11,7 @@ from django.contrib import messages
 from . import models
 from core.models import Contact
 from .transaction_sync import create_remote_transaction
+from .invoice_utils import create_invoice_from_sales_order
 
 
 class DocumentContactForm(forms.ModelForm):
@@ -169,6 +170,7 @@ class SalesOrderAdmin(admin.ModelAdmin):
     search_fields = ('document_no', 'opportunity__opportunity_number', 'business_partner__name', 'description')
     date_hierarchy = 'date_ordered'
     inlines = [SalesOrderLineInline]
+    actions = ['create_combined_invoice']
     
     def print_order(self, obj):
         """Add print button in list view"""
@@ -232,6 +234,13 @@ class SalesOrderAdmin(admin.ModelAdmin):
             'classes': ('wide',),
             'description': 'Remote payment system transaction tracking'
         }),
+        ('Invoice Management', {
+            'fields': (
+                ('invoice_actions',),
+            ),
+            'classes': ('wide',),
+            'description': 'Create invoices from this sales order'
+        }),
         ('Workflow & Approval', {
             'fields': (
                 ('current_workflow_state', 'workflow_actions'),
@@ -241,7 +250,7 @@ class SalesOrderAdmin(admin.ModelAdmin):
             'description': 'Document workflow and approval management'
         }),
     )
-    readonly_fields = ('total_lines', 'grand_total', 'business_partner_address_display', 'bill_to_address_display', 'ship_to_address_display', 'transaction_id', 'transaction_actions', 'payment_url_display', 'current_workflow_state', 'workflow_actions', 'approval_status_display')
+    readonly_fields = ('total_lines', 'grand_total', 'business_partner_address_display', 'bill_to_address_display', 'ship_to_address_display', 'transaction_id', 'transaction_actions', 'payment_url_display', 'invoice_actions', 'current_workflow_state', 'workflow_actions', 'approval_status_display')
     
     def get_readonly_fields(self, request, obj=None):
         """
@@ -401,6 +410,31 @@ class SalesOrderAdmin(admin.ModelAdmin):
             )
         return '-'
     payment_url_display.short_description = 'Payment URL'
+    
+    def invoice_actions(self, obj):
+        """Display invoice creation actions"""
+        if not obj.pk:
+            return '-'
+        
+        # Check if invoice already exists
+        existing_invoice = models.Invoice.objects.filter(sales_order=obj).first()
+        if existing_invoice:
+            invoice_url = reverse('admin:sales_invoice_change', args=[existing_invoice.pk])
+            return format_html(
+                '<a href="{}" style="color: green; font-weight: bold;">View Invoice: {}</a>',
+                invoice_url,
+                existing_invoice.document_no
+            )
+        
+        # Show create invoice button
+        create_url = reverse('admin:sales_salesorder_create_invoice', args=[obj.pk])
+        return format_html(
+            '<a href="{}" style="background-color: #007cba; color: white; padding: 8px 16px; '
+            'text-decoration: none; border-radius: 4px; font-weight: bold; display: inline-block;">'
+            'Create Invoice</a>',
+            create_url
+        )
+    invoice_actions.short_description = 'Invoice Actions'
     
     def current_workflow_state(self, obj):
         """Display current workflow state with visual indicator"""
@@ -564,6 +598,9 @@ class SalesOrderAdmin(admin.ModelAdmin):
             path('<uuid:object_id>/workflow-action/', 
                  self.admin_site.admin_view(self.workflow_action_view), 
                  name='sales_salesorder_workflow_action'),
+            path('<uuid:salesorder_id>/create-invoice/', 
+                 self.admin_site.admin_view(self.create_invoice_view), 
+                 name='sales_salesorder_create_invoice'),
         ]
         return custom_urls + urls
     
@@ -578,6 +615,35 @@ class SalesOrderAdmin(admin.ModelAdmin):
                 'success': False,
                 'error': 'Sales order not found'
             })
+    
+    def create_invoice_view(self, request, salesorder_id):
+        """Handle invoice creation from sales order"""
+        from django.shortcuts import redirect
+        from django.contrib import messages
+        
+        try:
+            sales_order = models.SalesOrder.objects.get(pk=salesorder_id)
+            
+            # Create invoice using the utility function
+            result = create_invoice_from_sales_order(sales_order, user=request.user)
+            
+            if result['success']:
+                messages.success(request, result['message'])
+                # Redirect to the created invoice
+                return redirect('admin:sales_invoice_change', result['invoice'].pk)
+            else:
+                messages.error(request, result['error'])
+                # If there's an existing invoice, redirect to it
+                if 'existing_invoice' in result:
+                    return redirect('admin:sales_invoice_change', result['existing_invoice'].pk)
+                
+        except models.SalesOrder.DoesNotExist:
+            messages.error(request, 'Sales order not found')
+        except Exception as e:
+            messages.error(request, f'Error creating invoice: {str(e)}')
+        
+        # Redirect back to sales order on any error
+        return redirect('admin:sales_salesorder_change', salesorder_id)
     
     def workflow_action_view(self, request, object_id):
         """Handle workflow action requests"""
@@ -873,6 +939,50 @@ class SalesOrderAdmin(admin.ModelAdmin):
             return obj.ship_to_location.full_address_with_name
         return "-"
     ship_to_address_display.short_description = "Ship To Address"
+    
+    def create_combined_invoice(self, request, queryset):
+        """Create a single invoice from multiple selected sales orders"""
+        from django.shortcuts import redirect
+        from django.contrib import messages
+        from .invoice_utils import create_invoice_from_multiple_orders
+        
+        orders = list(queryset)
+        if not orders:
+            messages.error(request, 'No orders selected')
+            return
+        
+        # Validate that all orders have the same customer
+        first_customer = orders[0].business_partner
+        for order in orders:
+            if order.business_partner != first_customer:
+                messages.error(request, 'All selected orders must have the same customer')
+                return
+        
+        # Check if any orders already have invoices
+        orders_with_invoices = []
+        for order in orders:
+            if models.Invoice.objects.filter(sales_order=order).exists():
+                orders_with_invoices.append(order.document_no)
+        
+        if orders_with_invoices:
+            messages.error(request, f'Some orders already have invoices: {", ".join(orders_with_invoices)}')
+            return
+        
+        # Create combined invoice
+        try:
+            result = create_invoice_from_multiple_orders(orders, user=request.user)
+            
+            if result['success']:
+                messages.success(request, result['message'])
+                # Redirect to the created invoice
+                return redirect('admin:sales_invoice_change', result['invoice'].pk)
+            else:
+                messages.error(request, result['error'])
+                
+        except Exception as e:
+            messages.error(request, f'Error creating combined invoice: {str(e)}')
+    
+    create_combined_invoice.short_description = "Create combined invoice from selected orders"
 
 
 @admin.register(models.SalesOrderLine)
@@ -886,12 +996,34 @@ class InvoiceLineInline(admin.TabularInline):
     model = models.InvoiceLine
     extra = 0
     fields = ('line_no', 'product', 'charge', 'description', 'quantity_invoiced', 'price_entered', 'discount', 'line_net_amount')
+    readonly_fields = ('line_no',)
+    
+    def get_readonly_fields(self, request, obj=None):
+        """Make line fields readonly based on parent invoice workflow state"""
+        readonly_fields = list(super().get_readonly_fields(request, obj))
+        
+        if obj and obj.pk:
+            workflow = obj.get_workflow_instance()
+            if workflow:
+                current_state = workflow.current_state.name
+                
+                # Lock line items for submitted invoices
+                locked_states = ['pending_approval', 'approved', 'sent', 'partial_payment', 'paid', 'overdue', 'cancelled']
+                
+                if current_state in locked_states:
+                    # Make all line fields readonly
+                    line_fields = ['product', 'charge', 'description', 'quantity_invoiced', 'price_entered', 'discount', 'line_net_amount']
+                    for field in line_fields:
+                        if field not in readonly_fields:
+                            readonly_fields.append(field)
+        
+        return readonly_fields
 
 
 @admin.register(models.Invoice)
 class InvoiceAdmin(admin.ModelAdmin):
     form = InvoiceForm
-    list_display = ('document_no', 'opportunity', 'business_partner', 'date_invoiced', 'doc_status', 'invoice_type', 'grand_total', 'is_paid')
+    list_display = ('document_no', 'opportunity', 'business_partner', 'date_invoiced', 'doc_status', 'invoice_type', 'grand_total', 'is_paid', 'print_invoice')
     list_filter = ('doc_status', 'opportunity', 'invoice_type', 'organization', 'is_paid', 'is_posted')
     search_fields = ('document_no', 'opportunity__opportunity_number', 'business_partner__name', 'description')
     date_hierarchy = 'date_invoiced'
@@ -899,18 +1031,18 @@ class InvoiceAdmin(admin.ModelAdmin):
     
     fieldsets = (
         ('Document Information', {
-            'fields': ('organization', 'document_no', 'description', 'doc_status', 'invoice_type')
+            'fields': ('organization', 'document_no', 'description', 'invoice_type')
         }),
         ('Dates', {
             'fields': ('date_invoiced', 'date_accounting', 'due_date')
         }),
-        ('Business Partner', {
+        ('Address Information', {
             'fields': (
                 ('business_partner_location', 'business_partner_address_display'),
                 ('bill_to_location', 'bill_to_address_display'),
-                ('bill_to_address',)
             ),
-            'classes': ('wide',)
+            'classes': ('wide',),
+            'description': 'All addresses filtered by business partner (save document first to see available addresses)'
         }),
         ('Contact Information', {
             'fields': (
@@ -928,11 +1060,18 @@ class InvoiceAdmin(admin.ModelAdmin):
         ('Sales Rep', {
             'fields': ('sales_rep',)
         }),
-        ('Flags', {
-            'fields': ('is_printed', 'is_paid', 'is_posted')
+        ('Status', {
+            'fields': ('is_paid', 'is_posted')
+        }),
+        ('Workflow & Status', {
+            'fields': (
+                ('current_workflow_state', 'workflow_actions'),
+            ),
+            'classes': ('wide',),
+            'description': 'Invoice workflow and status management'
         }),
     )
-    readonly_fields = ('total_lines', 'tax_amount', 'grand_total', 'paid_amount', 'open_amount', 'business_partner_address_display', 'bill_to_address_display')
+    readonly_fields = ('document_no', 'total_lines', 'tax_amount', 'grand_total', 'paid_amount', 'open_amount', 'business_partner_address_display', 'bill_to_address_display', 'current_workflow_state', 'workflow_actions')
     
     def business_partner_address_display(self, obj):
         """Display business partner location with customer name"""
@@ -947,6 +1086,310 @@ class InvoiceAdmin(admin.ModelAdmin):
             return obj.bill_to_location.full_address_with_name
         return "-"
     bill_to_address_display.short_description = "Bill To Address"
+    
+    def get_readonly_fields(self, request, obj=None):
+        """
+        Make fields readonly based on workflow state.
+        Once submitted for approval or completed, fields should be locked.
+        """
+        readonly_fields = list(super().get_readonly_fields(request, obj))
+        
+        if obj and obj.pk:
+            workflow = obj.get_workflow_instance()
+            if workflow:
+                current_state = workflow.current_state.name
+                
+                # Lock fields for submitted/approved invoices
+                locked_states = ['pending_approval', 'approved', 'sent', 'partial_payment', 'paid', 'overdue', 'cancelled']
+                
+                if current_state in locked_states:
+                    # Core invoice fields that should be locked (description remains editable)
+                    locked_fields = [
+                        'business_partner', 'opportunity', 'date_invoiced', 'date_accounting', 'due_date',
+                        'contact', 'internal_user', 'business_partner_location', 'bill_to_location',
+                        'organization', 'invoice_type', 'sales_order',
+                        'price_list', 'currency', 'payment_terms', 'sales_rep'
+                    ]
+                    
+                    # Add locked fields to readonly_fields if not already there
+                    for field in locked_fields:
+                        if field not in readonly_fields:
+                            readonly_fields.append(field)
+                    
+                    # For completely locked states (paid, cancelled), lock everything
+                    if current_state in ['paid', 'cancelled']:
+                        # Get all model fields except workflow-related ones
+                        all_fields = [f.name for f in obj._meta.fields if f.name not in [
+                            'id', 'created', 'updated', 'created_by', 'updated_by', 
+                            'is_active', 'legacy_id'
+                        ]]
+                        
+                        for field in all_fields:
+                            if field not in readonly_fields:
+                                readonly_fields.append(field)
+        
+        return readonly_fields
+    
+    def current_workflow_state(self, obj):
+        """Display current workflow state with visual indicator"""
+        if not obj.pk:
+            return '-'
+        
+        workflow = obj.get_workflow_instance()
+        if not workflow:
+            return 'No workflow configured'
+        
+        state_colors = {
+            'draft': '#6c757d',           # Gray
+            'pending_approval': '#fd7e14', # Orange  
+            'approved': '#20c997',        # Teal
+            'in_progress': '#0d6efd',     # Blue
+            'complete': '#198754',        # Green
+            'rejected': '#dc3545',        # Red
+            'closed': '#495057',          # Dark gray
+            'paid': '#28a745'             # Success green
+        }
+        
+        color = state_colors.get(workflow.current_state.name, '#6c757d')
+        
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 4px 8px; '
+            'border-radius: 4px; font-weight: bold;">{}</span>',
+            color, workflow.current_state.display_name
+        )
+    current_workflow_state.short_description = 'Workflow State'
+    
+    def workflow_actions(self, obj):
+        """Display workflow action buttons based on current state and permissions"""
+        if not obj.pk:
+            return '-'
+        
+        workflow = obj.get_workflow_instance()
+        if not workflow:
+            return 'No workflow configured'
+        
+        # For display purposes, we'll show all possible actions
+        # The actual permission check happens when the action is executed
+        current_user = None  # We'll check permissions during action execution
+        
+        buttons = []
+        current_state = workflow.current_state.name
+        
+        # State-specific buttons for invoices
+        if current_state == 'draft':
+            # Check if invoice needs approval based on amount
+            if obj.grand_total.amount >= 1000:  # $1000 threshold
+                buttons.append(self._create_invoice_workflow_button(
+                    'Submit for Approval', 'submit_approval', obj.pk, 'orange'
+                ))
+            else:
+                # Auto-approve under $1000
+                buttons.append(self._create_invoice_workflow_button(
+                    'Approve & Send', 'auto_approve', obj.pk, 'green'
+                ))
+            buttons.append(self._create_invoice_workflow_button(
+                'Cancel', 'cancel', obj.pk, 'red'
+            ))
+        
+        elif current_state == 'pending_approval':
+            buttons.append(self._create_invoice_workflow_button(
+                'Approve', 'approve', obj.pk, 'green'
+            ))
+            buttons.append(self._create_invoice_workflow_button(
+                'Reject', 'reject', obj.pk, 'red'
+            ))
+        
+        elif current_state == 'approved':
+            buttons.append(self._create_invoice_workflow_button(
+                'Send to Customer', 'send_invoice', obj.pk, 'blue'
+            ))
+            buttons.append(self._create_invoice_workflow_button(
+                'Cancel', 'cancel_approved', obj.pk, 'red'
+            ))
+        
+        elif current_state == 'sent':
+            buttons.append(self._create_invoice_workflow_button(
+                'Record Payment', 'full_payment', obj.pk, 'green'
+            ))
+            buttons.append(self._create_invoice_workflow_button(
+                'Partial Payment', 'partial_payment', obj.pk, 'orange'
+            ))
+            buttons.append(self._create_invoice_workflow_button(
+                'Mark Overdue', 'mark_overdue', obj.pk, 'red'
+            ))
+        
+        elif current_state == 'partial_payment':
+            buttons.append(self._create_invoice_workflow_button(
+                'Complete Payment', 'complete_payment', obj.pk, 'green'
+            ))
+            buttons.append(self._create_invoice_workflow_button(
+                'Mark Overdue', 'mark_overdue_partial', obj.pk, 'red'
+            ))
+        
+        elif current_state == 'overdue':
+            buttons.append(self._create_invoice_workflow_button(
+                'Record Payment', 'overdue_payment', obj.pk, 'green'
+            ))
+            buttons.append(self._create_invoice_workflow_button(
+                'Partial Payment', 'overdue_partial_payment', obj.pk, 'orange'
+            ))
+        
+        elif current_state == 'rejected':
+            buttons.append(self._create_invoice_workflow_button(
+                'Return to Draft', 'return_draft', obj.pk, 'blue'
+            ))
+            buttons.append(self._create_invoice_workflow_button(
+                'Cancel', 'cancel_rejected', obj.pk, 'red'
+            ))
+        
+        if buttons:
+            return format_html(' '.join(buttons))
+        return 'No actions available'
+    
+    workflow_actions.short_description = 'Workflow Actions'
+    
+    def _create_invoice_workflow_button(self, label, action, obj_id, color):
+        """Create workflow action button for invoices"""
+        colors = {
+            'blue': '#007cba',
+            'green': '#28a745', 
+            'orange': '#fd7e14',
+            'red': '#dc3545',
+            'gray': '#6c757d'
+        }
+        
+        return format_html(
+            '<a href="{}?action={}" style="background-color: {}; color: white; '
+            'padding: 4px 8px; text-decoration: none; border-radius: 3px; '
+            'margin-right: 5px; font-size: 11px;">{}</a>',
+            reverse('admin:sales_invoice_workflow_action', args=[obj_id]),
+            action,
+            colors.get(color, '#007cba'),
+            label
+        )
+    
+    def get_urls(self):
+        urls = super().get_urls()
+        custom_urls = [
+            path('<uuid:object_id>/workflow-action/', 
+                 self.admin_site.admin_view(self.invoice_workflow_action_view), 
+                 name='sales_invoice_workflow_action'),
+        ]
+        return custom_urls + urls
+    
+    def invoice_workflow_action_view(self, request, object_id):
+        """Handle invoice workflow action requests"""
+        from django.shortcuts import redirect
+        from django.contrib import messages
+        from core.models import WorkflowApproval, WorkflowState
+        from django.utils import timezone
+        
+        try:
+            obj = models.Invoice.objects.get(pk=object_id)
+            
+            # Get action from query parameter
+            action = request.GET.get('action')
+            if not action:
+                messages.error(request, 'No action specified')
+                return redirect('admin:sales_invoice_change', object_id)
+            
+            workflow = obj.get_workflow_instance()
+            if not workflow:
+                messages.error(request, 'No workflow configured for this invoice')
+                return redirect('admin:sales_invoice_change', object_id)
+            
+            # Execute workflow action
+            result = self.execute_invoice_workflow_action(obj, workflow, action, request.user)
+            
+            if result['success']:
+                messages.success(request, result['message'])
+            else:
+                messages.error(request, result['error'])
+            
+            # Redirect back to the invoice change page
+            return redirect('admin:sales_invoice_change', object_id)
+            
+        except models.Invoice.DoesNotExist:
+            messages.error(request, 'Invoice not found')
+            return redirect('admin:sales_invoice_changelist')
+        except Exception as e:
+            messages.error(request, f'Error: {str(e)}')
+            return redirect('admin:sales_invoice_change', object_id)
+    
+    def execute_invoice_workflow_action(self, obj, workflow, action, user):
+        """Execute the invoice workflow action with business logic"""
+        from core.models import WorkflowState
+        from django.utils import timezone
+        from decimal import Decimal
+        
+        current_state = workflow.current_state.name
+        
+        try:
+            # Find the target state based on action
+            state_transitions = {
+                'submit_approval': 'pending_approval',
+                'auto_approve': 'approved',
+                'cancel': 'cancelled',
+                'approve': 'approved',
+                'reject': 'rejected',
+                'send_invoice': 'sent',
+                'cancel_approved': 'cancelled',
+                'full_payment': 'paid',
+                'partial_payment': 'partial_payment',
+                'mark_overdue': 'overdue',
+                'complete_payment': 'paid',
+                'mark_overdue_partial': 'overdue',
+                'overdue_payment': 'paid',
+                'overdue_partial_payment': 'partial_payment',
+                'return_draft': 'draft',
+                'cancel_rejected': 'cancelled'
+            }
+            
+            target_state_name = state_transitions.get(action)
+            if not target_state_name:
+                return {'success': False, 'error': f'Unknown action: {action}'}
+            
+            # Find target state
+            target_state = WorkflowState.objects.filter(
+                workflow=workflow.workflow_definition,
+                name=target_state_name
+            ).first()
+            
+            if not target_state:
+                return {'success': False, 'error': f'Target state {target_state_name} not found'}
+            
+            # Update workflow state
+            workflow.current_state = target_state
+            workflow.updated = timezone.now()
+            workflow.updated_by = user
+            workflow.save()
+            
+            # Update invoice status if needed
+            if target_state_name == 'paid':
+                obj.is_paid = True
+                obj.paid_amount = obj.grand_total
+                obj.open_amount = obj.grand_total - obj.paid_amount
+            elif target_state_name == 'partial_payment':
+                # This would normally require payment amount input
+                # For now, we'll just mark it as partially paid
+                obj.paid_amount = obj.grand_total * Decimal('0.5')  # Example: 50%
+                obj.open_amount = obj.grand_total - obj.paid_amount
+            
+            obj.save()
+            
+            return {
+                'success': True,
+                'message': f'Invoice moved to {target_state.display_name}'
+            }
+            
+        except Exception as e:
+            return {'success': False, 'error': f'Error processing action: {str(e)}'}
+    
+    def print_invoice(self, obj):
+        """Add print button in list view"""
+        url = reverse('sales:invoice_pdf', args=[obj.id])
+        return format_html('<a class="button" href="{}" target="_blank">Print PDF</a>', url)
+    print_invoice.short_description = 'Print'
 
 
 @admin.register(models.InvoiceLine)

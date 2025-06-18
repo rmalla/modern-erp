@@ -721,3 +721,337 @@ def sales_order_pdf(request, order_id):
     response.write(pdf)
     
     return response
+
+
+@login_required
+def invoice_pdf(request, invoice_id):
+    """Generate PDF for an invoice"""
+    invoice = get_object_or_404(Invoice, id=invoice_id)
+    
+    # Create the HttpResponse object with PDF headers
+    response = HttpResponse(content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="INV_{invoice.document_no}.pdf"'
+    
+    # Create the PDF object using BytesIO
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=letter, 
+        leftMargin=0.5*inch,
+        rightMargin=0.5*inch,
+        topMargin=0.5*inch, 
+        bottomMargin=0.75*inch,
+        title=f"Invoice {invoice.document_no}",
+        author="Malla Group LLC"
+    )
+    
+    # Container for the 'Flowable' objects
+    elements = []
+    
+    # Define styles
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1a5490'),
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=14,
+        textColor=colors.HexColor('#1a5490'),
+        spaceAfter=12
+    )
+    company_style = ParagraphStyle(
+        'CompanyInfo',
+        parent=styles['Normal'],
+        fontSize=10,
+        alignment=TA_RIGHT,
+        textColor=colors.HexColor('#333333')
+    )
+    
+    # Create header with logo and company info
+    header_data = []
+    
+    # Try to add logo
+    import os
+    logo_path = '/opt/modern-erp/modern-erp/static/images/company_logo.png'
+    if os.path.exists(logo_path):
+        logo = Image(logo_path, width=2*inch, height=1*inch, hAlign='LEFT')
+        logo._restrictSize(2*inch, 1*inch)
+    else:
+        logo = Paragraph("Malla Group LLC", styles['Heading2'])
+    
+    # Create a special style for INVOICE title in header
+    title_header_style = ParagraphStyle(
+        'TitleHeader',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1a5490'),
+        alignment=TA_RIGHT,
+        spaceAfter=10
+    )
+    
+    # Company information with styled INVOICE title
+    invoice_title = Paragraph("INVOICE", title_header_style)
+    company_info = """<b>Malla Group LLC</b><br/>
+    1430 Brickell Bay Drive Unit 701<br/>
+    Miami, FL, 33131<br/>
+    United States"""
+    
+    # Create a nested table for the right column
+    right_column = Table([
+        [invoice_title],
+        [Paragraph(company_info, company_style)]
+    ], colWidths=[4*inch])
+    right_column.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+    ]))
+    
+    header_table = Table([[logo, right_column]], colWidths=[4*inch, 4*inch])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+        ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+    ]))
+    
+    elements.append(header_table)
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Invoice header information (matching sales order format)
+    header_data = []
+    
+    # First row - Invoice number and date
+    invoice_number = Paragraph(f"<b>Invoice Number:</b> {invoice.document_no}", styles['Normal'])
+    invoice_date = Paragraph(f"<b>Date:</b> {invoice.date_invoiced.strftime('%B %d, %Y')}", styles['Normal'])
+    
+    header_data.append([invoice_number, invoice_date, '', ''])
+    
+    # Second row - Due date and related sales order
+    due_date = Paragraph(f"<b>Due Date:</b> {invoice.due_date.strftime('%B %d, %Y')}", styles['Normal'])
+    if invoice.sales_order:
+        related_so = Paragraph(f"<b>Related Sales Order:</b> {invoice.sales_order.document_no}", styles['Normal'])
+        header_data.append([due_date, related_so, '', ''])
+    else:
+        header_data.append([due_date, '', '', ''])
+    
+    # Project number if exists (matching sales order format)
+    if invoice.opportunity:
+        project_number = invoice.opportunity.opportunity_number
+        if invoice.opportunity.name:
+            project_number += f" - {invoice.opportunity.name}"
+        header_data.insert(0, [
+            Paragraph('<b>Project Number:</b>', styles['Normal']), 
+            Paragraph(project_number, styles['Normal']), 
+            '', ''
+        ])
+    
+    incoterms_row = None
+    if invoice.payment_terms:
+        header_data.append([
+            Paragraph('<b>Payment Terms:</b>', styles['Normal']), 
+            Paragraph(str(invoice.payment_terms), styles['Normal']), 
+            '', ''
+        ])
+    
+    # Add incoterms if available (from sales order or invoice)
+    incoterms = None
+    incoterms_location = None
+    if invoice.sales_order and invoice.sales_order.incoterms:
+        incoterms = invoice.sales_order.incoterms
+        incoterms_location = invoice.sales_order.incoterms_location
+    
+    if incoterms:
+        incoterms_row = len(header_data)  # Track which row contains Incoterms
+        header_data.append([
+            Paragraph('<b>Incoterms:</b>', styles['Normal']), 
+            Paragraph(f"{incoterms.code} - {incoterms_location or ''}", styles['Normal']), 
+            '', ''
+        ])
+    
+    # Estimated delivery if available from sales order
+    if invoice.sales_order and invoice.sales_order.estimated_delivery_weeks:
+        weeks_text = f"{invoice.sales_order.estimated_delivery_weeks} Week{'s' if invoice.sales_order.estimated_delivery_weeks != 1 else ''}"
+        header_data.append([
+            Paragraph('<b>Estimated Delivery:</b>', styles['Normal']), 
+            Paragraph(weeks_text, styles['Normal']), 
+            '', ''
+        ])
+    
+    # Use proper page-fitting column widths (7.5" total available width)
+    header_table = Table(header_data, colWidths=[1.2*inch, 3.0*inch, 1.5*inch, 1.8*inch])
+    
+    # Base table style
+    table_style = [
+        ('FONT', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONT', (2, 0), (2, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 3),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+    ]
+    
+    # Add yellow background for Incoterms row if it exists
+    if incoterms_row is not None:
+        table_style.append(('BACKGROUND', (0, incoterms_row), (-1, incoterms_row), colors.yellow))
+    
+    header_table.setStyle(TableStyle(table_style))
+    elements.append(header_table)
+    elements.append(Spacer(1, 0.25*inch))
+    
+    # Simple contact and address information (avoid layout issues)
+    elements.append(Spacer(1, 0.1*inch))
+    
+    # Invoice Details
+    elements.append(Paragraph("Invoice Details", heading_style))
+    
+    # Table header - Include description column like sales order
+    line_data = [['Line', 'Product', 'Manufacturer', 'Part Number', 'Description', 'Qty', 'UOM', 'Unit Price', 'Total']]
+    
+    # Add invoice lines - using same logic as sales order
+    invoice_lines = invoice.lines.all().order_by('line_no')
+    if invoice_lines.exists():
+        for line in invoice_lines:
+            product_name = ''
+            manufacturer_name = ''
+            part_number = ''
+            description = ''
+            
+            if line.product:
+                product_name = line.product.name or ''
+                manufacturer_name = line.product.manufacturer.name if line.product.manufacturer else ''
+                part_number = line.product.manufacturer_part_number or ''
+                description = line.description or line.product.short_description or ''
+            elif line.charge:
+                product_name = line.charge.name
+                description = line.description or ''
+            
+            # Use Paragraph for long text to enable wrapping
+            product_paragraph = Paragraph(product_name, styles['Normal']) if product_name else ''
+            description_paragraph = Paragraph(description, styles['Normal']) if description else ''
+            
+            line_data.append([
+                str(line.line_no),
+                product_paragraph,
+                manufacturer_name,
+                part_number,
+                description_paragraph,
+                f"{line.quantity_invoiced:,.2f}",
+                line.product.uom.code if line.product and line.product.uom else '',
+                f"${line.price_actual.amount:,.2f}" if line.price_actual else '',
+                f"${line.line_net_amount.amount:,.2f}" if line.line_net_amount else ''
+            ])
+    else:
+        # Add a row indicating no items
+        line_data.append(['', 'No line items found', '', '', '', '', '', '', ''])
+    
+    # Create table with optimized column widths (9 columns, fits in 7.5" content area)
+    # Adjusted widths: smaller line column, more space for product, balanced totals
+    line_table = Table(line_data, colWidths=[0.25*inch, 1.8*inch, 0.7*inch, 0.8*inch, 1.0*inch, 0.4*inch, 0.3*inch, 0.7*inch, 0.8*inch])
+    
+    # Apply table style (matching sales order)
+    line_table.setStyle(TableStyle([
+        # Header row
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a5490')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 9),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+        ('TOPPADDING', (0, 0), (-1, 0), 8),
+        
+        # Data rows
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),  # Slightly larger font for better readability
+        ('VALIGN', (0, 1), (-1, -1), 'TOP'),
+        ('ALIGN', (5, 1), (5, -1), 'RIGHT'),  # Qty
+        ('ALIGN', (6, 1), (6, -1), 'CENTER'),  # UOM
+        ('ALIGN', (7, 1), (7, -1), 'RIGHT'),  # Unit Price
+        ('ALIGN', (8, 1), (8, -1), 'RIGHT'),  # Total
+        ('ALIGN', (0, 1), (0, -1), 'CENTER'),  # Line numbers
+        ('LEFTPADDING', (0, 0), (-1, -1), 3),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 1), (-1, -1), 4),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 4),
+        
+        # Grid lines
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#1a5490')),
+        
+        # Alternating row colors
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f0f0f0')])
+    ]))
+    
+    elements.append(line_table)
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Totals section (aligned to right side of invoice table)
+    totals_data = []
+    
+    # Subtotal
+    subtotal = f"${invoice.total_lines.amount:,.2f}"
+    totals_data.append(['', '', '', '', '', 'Subtotal:', subtotal])
+    
+    # Tax (if any)
+    if invoice.tax_amount and invoice.tax_amount.amount > 0:
+        tax_amount = f"${invoice.tax_amount.amount:,.2f}"
+        totals_data.append(['', '', '', '', '', 'Tax:', tax_amount])
+    
+    # Grand Total
+    grand_total = f"${invoice.grand_total.amount:,.2f}"
+    totals_data.append(['', '', '', '', '', 'Total:', grand_total])
+    
+    # Amount Paid
+    paid_amount = f"${invoice.paid_amount.amount:,.2f}"
+    totals_data.append(['', '', '', '', '', 'Amount Paid:', paid_amount])
+    
+    # Balance Due
+    balance_due = f"${invoice.open_amount.amount:,.2f}"
+    totals_data.append(['', '', '', '', '', 'Balance Due:', balance_due])
+    
+    # Use same column widths as invoice table for perfect alignment
+    totals_table = Table(totals_data, colWidths=[0.25*inch, 1.8*inch, 0.7*inch, 0.8*inch, 1.0*inch, 0.7*inch, 0.8*inch])
+    totals_table.setStyle(TableStyle([
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('ALIGN', (5, 0), (5, -1), 'RIGHT'),  # Labels right-aligned
+        ('ALIGN', (6, 0), (6, -1), 'RIGHT'),  # Amounts right-aligned  
+        ('FONTNAME', (5, -1), (-1, -1), 'Helvetica-Bold'),  # Bold for Balance Due row
+        ('FONTSIZE', (5, -1), (-1, -1), 11),
+        ('LINEBELOW', (5, -2), (-1, -2), 1, colors.black),  # Line above Balance Due
+        ('LEFTPADDING', (0, 0), (-1, -1), 3),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+        ('TOPPADDING', (0, 0), (-1, -1), 2),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 2),
+    ]))
+    
+    elements.append(totals_table)
+    elements.append(Spacer(1, 0.4*inch))
+    
+    # Footer with payment instructions
+    footer_text = """
+    <b>Payment Instructions:</b><br/>
+    Please remit payment within the terms specified above. 
+    Include invoice number {invoice_number} with your payment.<br/><br/>
+    <b>Thank you for your business!</b><br/>
+    For questions regarding this invoice, please contact us at info@malla-group.com
+    """.format(invoice_number=invoice.document_no)
+    
+    elements.append(Paragraph(footer_text, styles['Normal']))
+    
+    # Build PDF
+    doc.build(elements)
+    
+    # Get the value of the BytesIO buffer
+    pdf = buffer.getvalue()
+    
+    
+    buffer.close()
+    response.write(pdf)
+    
+    return response

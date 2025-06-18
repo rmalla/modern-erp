@@ -341,6 +341,37 @@ class Invoice(BaseModel):
         
     def __str__(self):
         return f"{self.document_no} - {self.business_partner.name}"
+    
+    def get_workflow_instance(self):
+        """Get or create workflow instance for this invoice"""
+        from django.contrib.contenttypes.models import ContentType
+        from core.models import DocumentWorkflow, WorkflowDefinition, WorkflowState
+        
+        content_type = ContentType.objects.get_for_model(self)
+        
+        try:
+            return DocumentWorkflow.objects.get(
+                content_type=content_type,
+                object_id=self.pk
+            )
+        except DocumentWorkflow.DoesNotExist:
+            # Create workflow instance if it doesn't exist
+            try:
+                workflow_def = WorkflowDefinition.objects.get(document_type='invoice')
+                initial_state = WorkflowState.objects.get(
+                    workflow=workflow_def, 
+                    name=workflow_def.initial_state
+                )
+                
+                return DocumentWorkflow.objects.create(
+                    content_type=content_type,
+                    object_id=self.pk,
+                    workflow_definition=workflow_def,
+                    current_state=initial_state
+                )
+            except (WorkflowDefinition.DoesNotExist, WorkflowState.DoesNotExist):
+                # Workflow not configured yet
+                return None
 
 
 class InvoiceLine(BaseModel):
