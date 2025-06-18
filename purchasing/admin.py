@@ -101,8 +101,10 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
         ('Vendor Details', {
             'fields': (
                 ('vendor_reference', 'buyer'),
-                ('bill_to_address',),
-                ('ship_to_address',),
+                ('business_partner_location', 'business_partner_address_display'),
+                ('bill_to_location', 'bill_to_address_display'),
+                ('ship_to_location', 'ship_to_address_display'),
+                ('bill_to_address', 'ship_to_address'),
             ),
             'classes': ('wide',)
         }),
@@ -117,7 +119,7 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
             'fields': (
                 ('warehouse', 'delivery_via'),
                 ('delivery_rule', 'freight_cost_rule'),
-                ('date_received',),
+                ('date_received', 'estimated_delivery_weeks'),
             ),
             'classes': ('wide',)
         }),
@@ -129,7 +131,28 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
             'classes': ('wide',)
         }),
     )
-    readonly_fields = ('total_lines', 'grand_total')
+    readonly_fields = ('total_lines', 'grand_total', 'business_partner_address_display', 'bill_to_address_display', 'ship_to_address_display')
+    
+    def business_partner_address_display(self, obj):
+        """Display business partner location with vendor name"""
+        if obj.business_partner_location:
+            return obj.business_partner_location.full_address_with_name
+        return "-"
+    business_partner_address_display.short_description = "Primary Address"
+    
+    def bill_to_address_display(self, obj):
+        """Display bill to location with vendor name"""
+        if obj.bill_to_location:
+            return obj.bill_to_location.full_address_with_name
+        return "-"
+    bill_to_address_display.short_description = "Bill To Address"
+    
+    def ship_to_address_display(self, obj):
+        """Display ship to location with vendor name"""
+        if obj.ship_to_location:
+            return obj.ship_to_location.full_address_with_name
+        return "-"
+    ship_to_address_display.short_description = "Ship To Address"
 
 
 @admin.register(models.PurchaseOrderLine)

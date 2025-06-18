@@ -69,6 +69,15 @@ class SalesOrder(BaseModel):
     opportunity = models.ForeignKey(Opportunity, on_delete=models.SET_NULL, null=True, blank=True,
                                   related_name='sales_orders', help_text="Related opportunity (Q #XXXXXX)")
     
+    # Transaction tracking
+    transaction_id = models.CharField(
+        max_length=32, 
+        blank=True, 
+        null=True,
+        unique=True,
+        help_text="32-character transaction code for remote payment system"
+    )
+    
     # Pricing and terms
     price_list = models.ForeignKey(PriceList, on_delete=models.PROTECT, limit_choices_to={'is_sales_price_list': True})
     currency = models.ForeignKey('core.Currency', on_delete=models.PROTECT)
@@ -85,6 +94,9 @@ class SalesOrder(BaseModel):
     delivery_via = models.CharField(max_length=100, blank=True)
     delivery_rule = models.CharField(max_length=50, default='Availability')
     freight_cost_rule = models.CharField(max_length=50, default='Freight Included')
+    estimated_delivery_weeks = models.PositiveSmallIntegerField(null=True, blank=True, 
+                                                               verbose_name="Estimated Delivery (Weeks)",
+                                                               help_text="Estimated delivery time in weeks")
     
     # Sales rep
     sales_rep = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True)
@@ -145,6 +157,56 @@ class SalesOrder(BaseModel):
             return 'partial'
         else:
             return 'complete'
+    
+    @property
+    def payment_url(self):
+        """Generate PayPal payment URL if transaction ID exists"""
+        if self.transaction_id:
+            return f"https://www.malla-group.com/toolbox/paypal-payment-gateway?transaction={self.transaction_id}"
+        return None
+    
+    def get_workflow_instance(self):
+        """Get or create workflow instance for this sales order"""
+        from django.contrib.contenttypes.models import ContentType
+        from core.models import DocumentWorkflow, WorkflowDefinition, WorkflowState
+        
+        content_type = ContentType.objects.get_for_model(self)
+        
+        try:
+            return DocumentWorkflow.objects.get(
+                content_type=content_type,
+                object_id=self.pk
+            )
+        except DocumentWorkflow.DoesNotExist:
+            # Create workflow instance if it doesn't exist
+            try:
+                workflow_def = WorkflowDefinition.objects.get(document_type='sales_order')
+                initial_state = WorkflowState.objects.get(
+                    workflow=workflow_def, 
+                    name=workflow_def.initial_state
+                )
+                
+                return DocumentWorkflow.objects.create(
+                    content_type=content_type,
+                    object_id=self.pk,
+                    workflow_definition=workflow_def,
+                    current_state=initial_state
+                )
+            except (WorkflowDefinition.DoesNotExist, WorkflowState.DoesNotExist):
+                # Workflow not configured yet
+                return None
+    
+    def needs_approval(self):
+        """Check if this order needs approval based on amount"""
+        workflow = self.get_workflow_instance()
+        if not workflow or not workflow.workflow_definition.requires_approval:
+            return False
+        
+        threshold = workflow.workflow_definition.approval_threshold_amount
+        if threshold and self.grand_total.amount >= threshold.amount:
+            return True
+        
+        return False
 
 
 class SalesOrderLine(BaseModel):

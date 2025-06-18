@@ -83,6 +83,9 @@ class PurchaseOrder(BaseModel):
     delivery_via = models.CharField(max_length=100, blank=True)
     delivery_rule = models.CharField(max_length=50, default='Availability')
     freight_cost_rule = models.CharField(max_length=50, default='Freight Included')
+    estimated_delivery_weeks = models.PositiveSmallIntegerField(null=True, blank=True, 
+                                                               verbose_name="Estimated Delivery (Weeks)",
+                                                               help_text="Estimated delivery time in weeks")
     
     # Buyer
     buyer = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True)

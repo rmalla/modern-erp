@@ -4,9 +4,12 @@ These models provide the foundation for the entire system,
 inspired by iDempiere's architecture but modernized.
 """
 
+# Workflow models will be defined below
+
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import MinLengthValidator, EmailValidator
+from django.contrib.contenttypes.fields import GenericForeignKey
 from djmoney.models.fields import MoneyField
 from django.utils import timezone
 import uuid
@@ -566,3 +569,157 @@ class Contact(BaseModel):
         if self.title:
             return f"{name}, {self.title}"
         return name
+
+
+# =============================================================================
+# WORKFLOW MODELS
+# =============================================================================
+
+class WorkflowDefinition(BaseModel):
+    """
+    Defines workflow rules for document types
+    """
+    name = models.CharField(max_length=100)
+    document_type = models.CharField(max_length=50, unique=True, 
+                                   help_text="e.g., 'sales_order', 'purchase_order', 'invoice'")
+    initial_state = models.CharField(max_length=30, default='draft')
+    requires_approval = models.BooleanField(default=False)
+    approval_threshold_amount = MoneyField(max_digits=15, decimal_places=2, 
+                                         default_currency='USD', null=True, blank=True,
+                                         help_text="Amount above which approval is required")
+    approval_permission = models.CharField(max_length=100, blank=True,
+                                         help_text="Permission required to approve")
+    reactivation_permission = models.CharField(max_length=100, blank=True,
+                                             help_text="Permission required to reactivate completed docs")
+    
+    class Meta:
+        ordering = ['name']
+        
+    def __str__(self):
+        return f"{self.name} ({self.document_type})"
+
+
+class WorkflowState(BaseModel):
+    """
+    Individual states in a workflow
+    """
+    workflow = models.ForeignKey(WorkflowDefinition, on_delete=models.CASCADE, related_name='states')
+    name = models.CharField(max_length=30)
+    display_name = models.CharField(max_length=100)
+    is_final = models.BooleanField(default=False, help_text="Cannot transition from this state")
+    requires_approval = models.BooleanField(default=False)
+    color_code = models.CharField(max_length=7, default='#6c757d', 
+                                help_text="Hex color code for UI display")
+    order = models.IntegerField(default=0, help_text="Display order")
+    
+    class Meta:
+        unique_together = ['workflow', 'name']
+        ordering = ['workflow', 'order']
+        
+    def __str__(self):
+        return f"{self.workflow.name}: {self.display_name}"
+
+
+class WorkflowTransition(BaseModel):
+    """
+    Valid transitions between states
+    """
+    workflow = models.ForeignKey(WorkflowDefinition, on_delete=models.CASCADE, related_name='transitions')
+    from_state = models.ForeignKey(WorkflowState, on_delete=models.CASCADE, related_name='transitions_from')
+    to_state = models.ForeignKey(WorkflowState, on_delete=models.CASCADE, related_name='transitions_to')
+    name = models.CharField(max_length=100, help_text="Action name (e.g., 'Submit for Approval')")
+    required_permission = models.CharField(max_length=100, blank=True)
+    requires_approval = models.BooleanField(default=False)
+    button_color = models.CharField(max_length=20, default='blue',
+                                  choices=[
+                                      ('blue', 'Blue'),
+                                      ('green', 'Green'),
+                                      ('orange', 'Orange'),
+                                      ('red', 'Red'),
+                                      ('gray', 'Gray'),
+                                  ])
+    
+    class Meta:
+        unique_together = ['workflow', 'from_state', 'to_state']
+        ordering = ['workflow', 'from_state__order']
+        
+    def __str__(self):
+        return f"{self.workflow.name}: {self.from_state.name} → {self.to_state.name}"
+
+
+class DocumentWorkflow(BaseModel):
+    """
+    Workflow instance for a specific document
+    """
+    content_type = models.ForeignKey('contenttypes.ContentType', on_delete=models.CASCADE)
+    object_id = models.UUIDField()
+    content_object = GenericForeignKey('content_type', 'object_id')
+    
+    workflow_definition = models.ForeignKey(WorkflowDefinition, on_delete=models.CASCADE)
+    current_state = models.ForeignKey(WorkflowState, on_delete=models.CASCADE)
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name='workflows_created')
+    
+    class Meta:
+        unique_together = ['content_type', 'object_id']
+        
+    def __str__(self):
+        return f"{self.content_object} - {self.current_state.display_name}"
+
+
+class WorkflowApproval(BaseModel):
+    """
+    Approval requests and responses
+    """
+    APPROVAL_STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('withdrawn', 'Withdrawn'),
+    ]
+    
+    document_workflow = models.ForeignKey(DocumentWorkflow, on_delete=models.CASCADE, 
+                                        related_name='approvals')
+    requested_by = models.ForeignKey(User, on_delete=models.CASCADE, 
+                                   related_name='approval_requests_made')
+    requested_at = models.DateTimeField(auto_now_add=True)
+    
+    approver = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                               related_name='approvals_given')
+    responded_at = models.DateTimeField(null=True, blank=True)
+    
+    status = models.CharField(max_length=20, choices=APPROVAL_STATUS_CHOICES, default='pending')
+    comments = models.TextField(blank=True)
+    
+    # Amount at time of request (for audit trail)
+    amount_at_request = MoneyField(max_digits=15, decimal_places=2, default_currency='USD',
+                                 null=True, blank=True)
+    
+    class Meta:
+        ordering = ['-requested_at']
+        
+    def __str__(self):
+        return f"{self.document_workflow.content_object} - {self.get_status_display()}"
+
+
+class UserPermission(BaseModel):
+    """
+    User permissions for workflow actions
+    """
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='workflow_permissions')
+    permission_code = models.CharField(max_length=100)
+    granted_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True,
+                                 related_name='permissions_granted')
+    granted_at = models.DateTimeField(auto_now_add=True)
+    is_active = models.BooleanField(default=True)
+    
+    # Optional limits
+    approval_limit = MoneyField(max_digits=15, decimal_places=2, default_currency='USD',
+                              null=True, blank=True, 
+                              help_text="Maximum amount this user can approve")
+    
+    class Meta:
+        unique_together = ['user', 'permission_code']
+        
+    def __str__(self):
+        return f"{self.user.get_full_name()} - {self.permission_code}"

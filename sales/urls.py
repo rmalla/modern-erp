@@ -19,6 +19,7 @@ urlpatterns = [
     path('order/<uuid:order_id>/', views.sales_order_detail, name='order_detail'),
     path('order/<uuid:order_id>/generate-pos/', views.generate_purchase_orders, name='generate_pos'),
     path('order/<uuid:order_id>/ship-invoice/', views.quick_ship_invoice, name='quick_ship_invoice'),
+    path('order/<uuid:order_id>/pdf/', views.sales_order_pdf, name='order_pdf'),
     
     # Shipping and invoicing
     path('ship-invoice/<uuid:shipment_id>/<uuid:invoice_id>/', 

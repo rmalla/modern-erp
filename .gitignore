@@ -76,3 +76,4 @@ tmp/
 *password*
 *key*
 credentials.json
+remote_db_config.py

@@ -17,6 +17,14 @@ from django.db import transaction, models
 from django.utils import timezone
 from decimal import Decimal
 import json
+from io import BytesIO
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter, A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image, PageTemplate, Frame
+from reportlab.platypus.frames import Frame
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT, TA_JUSTIFY
 
 from .models import SalesOrder, SalesOrderLine, Invoice, Shipment
 from .utils import SalesOrderManager, create_customer_order_from_data, bulk_analyze_sales_orders
@@ -352,3 +360,364 @@ def _create_invoice_from_so(sales_order, line_quantities, user):
     # Implementation would create Invoice and InvoiceLine objects
     # This is a placeholder for the actual implementation
     pass
+
+
+def footer_canvas(canvas, doc):
+    """Add footer to each page"""
+    canvas.saveState()
+    
+    # Footer text
+    footer_text = "+1 (305) 3954925 - orders@malla-group.com"
+    
+    # Set font and size
+    canvas.setFont('Helvetica', 9)
+    canvas.setFillColor(colors.HexColor('#666666'))
+    
+    # Draw footer centered at bottom
+    page_width = letter[0]
+    text_width = canvas.stringWidth(footer_text, 'Helvetica', 9)
+    x = (page_width - text_width) / 2
+    y = 0.3 * inch
+    
+    canvas.drawString(x, y, footer_text)
+    
+    # Add page number
+    page_num = canvas.getPageNumber()
+    canvas.setFont('Helvetica', 8)
+    canvas.drawRightString(page_width - 0.5*inch, y, f"Page {page_num}")
+    
+    canvas.restoreState()
+
+
+@login_required
+def sales_order_pdf(request, order_id):
+    """Generate PDF for a sales order"""
+    order = get_object_or_404(SalesOrder, id=order_id)
+    
+    # Create the HttpResponse object with PDF headers
+    response = HttpResponse(content_type='application/pdf')
+    response['Content-Disposition'] = f'attachment; filename="SO_{order.document_no}.pdf"'
+    
+    # Create the PDF object using BytesIO
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, 
+        pagesize=letter, 
+        topMargin=0.5*inch, 
+        bottomMargin=0.75*inch,
+        title=f"Sales Order {order.document_no}",
+        author="Malla Group LLC"
+    )
+    
+    # Container for the 'Flowable' objects
+    elements = []
+    
+    # Define styles
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1a5490'),
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=14,
+        textColor=colors.HexColor('#1a5490'),
+        spaceAfter=12
+    )
+    company_style = ParagraphStyle(
+        'CompanyInfo',
+        parent=styles['Normal'],
+        fontSize=10,
+        alignment=TA_RIGHT,
+        textColor=colors.HexColor('#333333')
+    )
+    
+    # Create header with logo and company info
+    header_data = []
+    
+    # Try to add logo
+    import os
+    logo_path = '/opt/modern-erp/modern-erp/static/images/company_logo.png'
+    if os.path.exists(logo_path):
+        logo = Image(logo_path, width=2*inch, height=1*inch, hAlign='LEFT')
+        logo._restrictSize(2*inch, 1*inch)
+    else:
+        logo = Paragraph("Malla Group LLC", styles['Heading2'])
+    
+    # Create a special style for SALES ORDER title in header
+    title_header_style = ParagraphStyle(
+        'TitleHeader',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#1a5490'),
+        alignment=TA_RIGHT,
+        spaceAfter=10
+    )
+    
+    # Company information with styled SALES ORDER title
+    sales_order_title = Paragraph("SALES ORDER", title_header_style)
+    company_info = """<b>Malla Group LLC</b><br/>
+    1430 Brickell Bay Drive Unit 701<br/>
+    Miami, FL, 33131<br/>
+    United States"""
+    
+    # Create a nested table for the right column
+    right_column = Table([
+        [sales_order_title],
+        [Paragraph(company_info, company_style)]
+    ], colWidths=[4*inch])
+    right_column.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+    ]))
+    
+    header_table = Table([[logo, right_column]], colWidths=[4*inch, 4*inch])
+    header_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('ALIGN', (0, 0), (0, 0), 'LEFT'),
+        ('ALIGN', (1, 0), (1, 0), 'RIGHT'),
+    ]))
+    
+    elements.append(header_table)
+    elements.append(Spacer(1, 0.3*inch))
+    
+    # Order header information
+    # Format contact info as "Name (email)"
+    customer_contact_info = ''
+    if order.contact:
+        customer_contact_info = order.contact.name
+        if order.contact.email:
+            customer_contact_info += f" ({order.contact.email})"
+    
+    malla_contact_info = ''
+    if order.internal_user:
+        malla_contact_info = order.internal_user.get_full_name()
+        if order.internal_user.email:
+            malla_contact_info += f" ({order.internal_user.email})"
+    
+    # Build header data starting with core fields
+    header_data = [
+        ['Order Number:', order.document_no, 'Date:', order.date_ordered.strftime('%Y-%m-%d') if order.date_ordered else ''],
+        ['Customer:', order.business_partner.name if order.business_partner else '', 'Customer PO:', order.customer_po_reference or ''],
+        ['Customer Contact:', customer_contact_info, '', ''],
+        ['Malla Contact:', malla_contact_info, '', ''],
+    ]
+    
+    # Add project number at the beginning if opportunity exists
+    if order.opportunity:
+        project_number = order.opportunity.opportunity_number
+        if order.opportunity.name:
+            project_number += f" - {order.opportunity.name}"
+        header_data.insert(0, ['Project Number:', project_number, '', ''])
+    
+    incoterms_row = None
+    if order.payment_terms:
+        header_data.append(['Payment Terms:', order.payment_terms.name, '', ''])
+    
+    if order.incoterms:
+        incoterms_row = len(header_data)  # Track which row contains Incoterms
+        header_data.append(['Incoterms:', f"{order.incoterms.code} - {order.incoterms_location or ''}", '', ''])
+    
+    if order.estimated_delivery_weeks:
+        weeks_text = f"{order.estimated_delivery_weeks} Week{'s' if order.estimated_delivery_weeks != 1 else ''}"
+        header_data.append(['Estimated Delivery:', weeks_text, '', ''])
+    
+    header_table = Table(header_data, colWidths=[1.5*inch, 3.5*inch, 1.5*inch, 1.5*inch])
+    
+    # Base table style
+    table_style = [
+        ('FONT', (0, 0), (0, -1), 'Helvetica-Bold'),
+        ('FONT', (2, 0), (2, -1), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+    ]
+    
+    # Add yellow background for Incoterms row if it exists
+    if incoterms_row is not None:
+        table_style.append(('BACKGROUND', (0, incoterms_row), (-1, incoterms_row), colors.yellow))
+    
+    header_table.setStyle(TableStyle(table_style))
+    elements.append(header_table)
+    elements.append(Spacer(1, 0.25*inch))
+    
+    # Addresses - Bill To and Ship To side by side (no title)
+    if order.bill_to_location or order.ship_to_location:
+        # Get address text
+        bill_to_text = order.bill_to_location.full_address if order.bill_to_location else 'Not specified'
+        ship_to_text = order.ship_to_location.full_address if order.ship_to_location else 'Not specified'
+        
+        # Create side-by-side layout
+        address_data = [[
+            Paragraph('<b>Bill To:</b><br/>' + bill_to_text.replace('\n', '<br/>'), styles['Normal']),
+            Paragraph('<b>Ship To:</b><br/>' + ship_to_text.replace('\n', '<br/>'), styles['Normal'])
+        ]]
+        
+        address_table = Table(address_data, colWidths=[4*inch, 4*inch])
+        address_table.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0),
+            ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+            ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+        ]))
+        elements.append(address_table)
+    
+    elements.append(Spacer(1, 0.2*inch))
+    
+    # Order lines
+    elements.append(Paragraph("Order Details", heading_style))
+    
+    # Table header
+    line_data = [['Line', 'Product', 'Description', 'Qty', 'UOM', 'Unit Price', 'Discount', 'Total']]
+    
+    # Add order lines
+    order_lines = order.lines.all().order_by('line_no')
+    if order_lines.exists():
+        for line in order_lines:
+            product_info = ''
+            if line.product:
+                product_info = f"{line.product.manufacturer_part_number}\n{line.product.name}"
+            elif line.charge:
+                product_info = line.charge.name
+            
+            line_data.append([
+                str(line.line_no),
+                product_info,
+                line.description or '',
+                f"{line.quantity_ordered:,.2f}",
+                line.product.uom.code if line.product and line.product.uom else '',
+                f"${line.price_entered.amount:,.2f}" if line.price_entered else '',
+                f"{line.discount}%" if line.discount else '',
+                f"${line.line_net_amount.amount:,.2f}" if line.line_net_amount else ''
+            ])
+    else:
+        # Add a row indicating no items
+        line_data.append(['', 'No line items found', '', '', '', '', '', ''])
+    
+    # Create table with specific column widths
+    line_table = Table(line_data, colWidths=[0.5*inch, 1.5*inch, 2*inch, 0.7*inch, 0.5*inch, 1*inch, 0.7*inch, 1*inch])
+    
+    # Apply table style
+    line_table.setStyle(TableStyle([
+        # Header row
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1a5490')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('FONT', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        
+        # Data rows
+        ('FONT', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 9),
+        ('VALIGN', (0, 1), (-1, -1), 'TOP'),
+        ('ALIGN', (3, 1), (3, -1), 'RIGHT'),  # Qty
+        ('ALIGN', (5, 1), (5, -1), 'RIGHT'),  # Unit Price
+        ('ALIGN', (6, 1), (6, -1), 'RIGHT'),  # Discount
+        ('ALIGN', (7, 1), (7, -1), 'RIGHT'),  # Total
+        
+        # Grid
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+        ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#1a5490')),
+        
+        # Alternating row colors
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f0f0f0')]),
+    ]))
+    
+    elements.append(line_table)
+    elements.append(Spacer(1, 0.2*inch))
+    
+    # Totals
+    totals_data = []
+    if order.total_lines:
+        totals_data.append(['Subtotal:', f"${order.total_lines.amount:,.2f}"])
+    if hasattr(order, 'tax_amount') and order.tax_amount:
+        totals_data.append(['Tax:', f"${order.tax_amount.amount:,.2f}"])
+    if order.grand_total:
+        totals_data.append(['Total:', f"${order.grand_total.amount:,.2f}"])
+    
+    if totals_data:
+        totals_table = Table(totals_data, colWidths=[6*inch, 2*inch])
+        totals_table.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
+            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
+            ('FONT', (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, -1), 11),
+            ('LINEABOVE', (0, -1), (-1, -1), 2, colors.HexColor('#1a5490')),
+            ('TOPPADDING', (0, -1), (-1, -1), 10),
+        ]))
+        elements.append(totals_table)
+    
+    # Notes/Description
+    if order.description:
+        elements.append(Spacer(1, 0.3*inch))
+        elements.append(Paragraph("Notes", heading_style))
+        elements.append(Paragraph(order.description, styles['Normal']))
+    
+    # Add page break for Terms and Conditions
+    elements.append(PageBreak())
+    
+    # Terms and Conditions Page
+    elements.append(Paragraph("TERMS AND CONDITIONS", title_style))
+    elements.append(Spacer(1, 0.2*inch))
+    
+    # Get dynamic values for placeholders
+    current_date = order.date_ordered.strftime('%B %d, %Y') if order.date_ordered else "Date TBD"
+    buyer_name = order.business_partner.name if order.business_partner else "BUYER NAME"
+    proposal_number = order.opportunity.opportunity_number if order.opportunity else "PROPOSAL NUMBER"
+    incoterm_text = f"{order.incoterms.code} {order.incoterms_location}" if order.incoterms and order.incoterms_location else "INCOTERM LOCATION"
+    
+    # Terms and Conditions text with dynamic placeholders
+    terms_text = f"""This SALES ORDER is presented {current_date} between MALLA Group LLC, located in 1430 Brickell Bay Drive UNIT 701 Miami, Florida 33131, USA (THE SELLER), and {buyer_name} (THE BUYER), for the purchase of the goods described on the Proposal Number {proposal_number} above. This proposal contains all the terms of the sale including, description (Manufacturer and Part Number), quantities, payment terms, incoterms, estimated delivery dates and validity.
+
+<b>01. TERMS.</b> THE SELLER is responsible to deliver the goods to THE BUYER according to the Manufacturer and Part Number, Incoterms, Estimated Delivery Date and established payment terms. The Descriptions are ONLY for reference, what completely defines the product that is being purchased are the MANUFACTURER and the PART NUMBER.
+
+<b>02. CHANGES.</b> Once this document is approved by THE BUYER, no changes to the order are allowed, nor the order can be cancelled. No returns are allowed for reasons other a defect on the product upon arrival.
+
+<b>03. RISK OF LOSS OR DAMAGE.</b> The risk, of damage or loss, independent of the source, is THE SELLER's responsibility ONLY until the goods are delivered according to the Incoterms established on this SALES ORDER (The Incoterm for this order is {incoterm_text}). Once the goods are delivered according to the Incoterm, ALL responsibility over the goods are exclusively of the BUYER.
+
+<b>04. ACCEPTANCE.</b> THE BUYER will need to notify the THE SELLER of any claim of damage or loss, quality or grade of the delivered goods, within 5 business days from the date of delivery. Inaction from the BUYER after this timeframe will mean the IRREVOCABLE acceptance of the goods from the BUYER. All claims and communications on this topic between parties need to be made in writing.
+
+<b>05. PAYMENT TERMS.</b> Once a Commercial Invoice is issued, if credit (financing) is offered, the credit days will be counted starting from the day the Invoice is issued. Any delay on the payment will incur in a 2% late fee for every delayed week.
+
+<b>06. WARRANTY.</b> THE SELLER ensures that the purchased products are free of substantial manufacturing details. THE SELLER's responsibility under this warranty is LIMITED to a supporting role, assisting THE BUYER to execute the warranty directly with the manufacturer. Any repair or replacement of damaged parts are to be processed directly with the manufacturer. THE SELLER is responsible to facilitate communication and assist on warranty claims according to each manufacturer's policy (if they offer warranty). It is possible that a specific manufacturer does not offer warranty or requires a re-stocking fee or other fees to process the warranty, if this is the case, THE SELLER will have to assume those terms. THE SELLER does not explicitly or implicitly assumes any other responsibility other than what is established above.
+
+<b>07. TAXES.</b> All sales taxes, tariffs, and other governmental charges shall be paid by THE BUYER and are Buyer's Responsibility Except As Limited By Law.
+
+<b>08. GOVERNING LAW.</b> This Contract shall be governed by the laws of the State of Florida, United States of America. Any disputes hereunder will be heard in the appropriate federal and state courts located in Florida, United States of America.
+
+<b>09. FORCE MAJEURE.</b> THE SELLER may, without liability, delay performance or cancel this Contract on account of force majeure events or other circumstances beyond its control, including, but not limited to, strikes, acts of God, political unrest, embargo, failure of source of supply, or casualty.
+
+<b>10. MISCELLANEOUS.</b> This Contract contains the entire agreement between the parties and supersedes and replaces all such prior agreements with respect to matters expressly set forth herein. No modification shall be made to this Contract except in writing and signed by both parties. This Contract shall be binding upon the parties and their respective heirs, executors, administrators, successors, assigns and personal representatives.
+
+<b>11. ENTIRE AGREEMENT.</b> The parties intend this writing to be the final expression of the terms of their agreement and further intend that this writing be the complete and exclusive statement of all the terms of their agreement.
+
+<b>12. LEGAL EXPENSE.</b> In any litigation, arbitration, or other proceeding by which one party either seeks to enforce its rights under this Sales Contract or seeks a declaration of any rights or obligations under this Sales Contract, the prevailing party shall be awarded reasonable attorney fees, together with any costs and expenses, to resolve the dispute and to enforce the final judgment."""
+    
+    # Create terms paragraph with smaller font and justified text
+    terms_style = ParagraphStyle(
+        'TermsStyle',
+        parent=styles['Normal'],
+        fontSize=9,
+        leading=11,
+        alignment=TA_JUSTIFY,
+        spaceAfter=6,
+        leftIndent=0,
+        rightIndent=0
+    )
+    
+    elements.append(Paragraph(terms_text, terms_style))
+    
+    # Build PDF with custom footer
+    doc.build(elements, onFirstPage=footer_canvas, onLaterPages=footer_canvas)
+    
+    # Get the value of the BytesIO buffer and write it to the response
+    pdf = buffer.getvalue()
+    buffer.close()
+    response.write(pdf)
+    
+    return response

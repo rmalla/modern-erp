@@ -270,3 +270,104 @@ class BusinessPartnerLocationAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         """Optimize queries by selecting related objects"""
         return super().get_queryset(request).select_related('business_partner')
+
+
+# =============================================================================
+# WORKFLOW ADMIN
+# =============================================================================
+
+class WorkflowStateInline(admin.TabularInline):
+    model = models.WorkflowState
+    extra = 0
+    fields = ('name', 'display_name', 'order', 'color_code', 'is_final', 'requires_approval')
+    ordering = ['order']
+
+
+class WorkflowTransitionInline(admin.TabularInline):
+    model = models.WorkflowTransition
+    extra = 0
+    fields = ('name', 'from_state', 'to_state', 'button_color', 'required_permission', 'requires_approval')
+
+
+@admin.register(models.WorkflowDefinition)
+class WorkflowDefinitionAdmin(admin.ModelAdmin):
+    list_display = ('name', 'document_type', 'requires_approval', 'approval_threshold_amount', 'initial_state')
+    list_filter = ('requires_approval', 'document_type')
+    search_fields = ('name', 'document_type')
+    inlines = [WorkflowStateInline, WorkflowTransitionInline]
+    
+    fieldsets = (
+        ('Basic Information', {
+            'fields': ('name', 'document_type', 'initial_state')
+        }),
+        ('Approval Settings', {
+            'fields': ('requires_approval', 'approval_threshold_amount', 'approval_permission')
+        }),
+        ('Permissions', {
+            'fields': ('reactivation_permission',)
+        }),
+    )
+
+
+@admin.register(models.WorkflowState)
+class WorkflowStateAdmin(admin.ModelAdmin):
+    list_display = ('workflow', 'display_name', 'name', 'order', 'is_final', 'requires_approval')
+    list_filter = ('workflow', 'is_final', 'requires_approval')
+    search_fields = ('name', 'display_name', 'workflow__name')
+    ordering = ['workflow', 'order']
+
+
+@admin.register(models.WorkflowTransition)
+class WorkflowTransitionAdmin(admin.ModelAdmin):
+    list_display = ('workflow', 'name', 'from_state', 'to_state', 'button_color', 'requires_approval')
+    list_filter = ('workflow', 'button_color', 'requires_approval')
+    search_fields = ('name', 'workflow__name')
+
+
+@admin.register(models.DocumentWorkflow)
+class DocumentWorkflowAdmin(admin.ModelAdmin):
+    list_display = ('content_object', 'current_state', 'workflow_definition', 'created_by', 'created')
+    list_filter = ('workflow_definition', 'current_state', 'created')
+    search_fields = ('object_id',)
+    readonly_fields = ('content_type', 'object_id', 'content_object')
+    
+    def has_add_permission(self, request):
+        # Don't allow manual creation - these are auto-created
+        return False
+
+
+@admin.register(models.WorkflowApproval)
+class WorkflowApprovalAdmin(admin.ModelAdmin):
+    list_display = ('document_workflow', 'requested_by', 'status', 'approver', 'requested_at', 'responded_at')
+    list_filter = ('status', 'requested_at', 'responded_at')
+    search_fields = ('requested_by__username', 'approver__username', 'comments')
+    readonly_fields = ('requested_at', 'responded_at')
+    
+    fieldsets = (
+        ('Request Information', {
+            'fields': ('document_workflow', 'requested_by', 'requested_at', 'amount_at_request')
+        }),
+        ('Response Information', {
+            'fields': ('approver', 'responded_at', 'status', 'comments')
+        }),
+    )
+
+
+@admin.register(models.UserPermission)
+class UserPermissionAdmin(admin.ModelAdmin):
+    list_display = ('user', 'permission_code', 'is_active', 'approval_limit', 'granted_by', 'granted_at')
+    list_filter = ('permission_code', 'is_active', 'granted_at')
+    search_fields = ('user__username', 'user__first_name', 'user__last_name', 'permission_code')
+    
+    fieldsets = (
+        ('Permission Details', {
+            'fields': ('user', 'permission_code', 'is_active')
+        }),
+        ('Limits', {
+            'fields': ('approval_limit',)
+        }),
+        ('Audit Trail', {
+            'fields': ('granted_by', 'granted_at'),
+            'classes': ('collapse',)
+        }),
+    )
