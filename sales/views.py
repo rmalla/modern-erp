@@ -29,46 +29,110 @@ from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT, TA_JUSTIFY
 from .models import SalesOrder, SalesOrderLine, Invoice, Shipment
 from .utils import SalesOrderManager, create_customer_order_from_data, bulk_analyze_sales_orders
 from core.models import BusinessPartner
+from core.cache_utils import cached_function, TIMEOUT_SHORT, TIMEOUT_MEDIUM
 from inventory.models import Product
 from purchasing.models import PurchaseOrder
+from django.core.cache import cache
+
+
+@cached_function(timeout=TIMEOUT_SHORT, prefix="dashboard_pending_orders")
+def get_pending_orders():
+    """Get pending orders with caching."""
+    return list(SalesOrder.objects.filter(doc_status='drafted').order_by('-date_ordered')[:20])
+
+
+@cached_function(timeout=TIMEOUT_SHORT, prefix="dashboard_in_progress_orders")
+def get_in_progress_orders():
+    """Get in-progress orders with caching."""
+    return list(SalesOrder.objects.filter(doc_status='in_progress').order_by('-date_ordered')[:20])
+
+
+@cached_function(timeout=TIMEOUT_MEDIUM, prefix="dashboard_orders_needing_po")
+def get_orders_needing_po():
+    """Get orders needing purchase orders with caching."""
+    orders_needing_po = []
+    for so in SalesOrder.objects.filter(doc_status__in=['drafted', 'in_progress'])[:50]:
+        manager = SalesOrderManager(so)
+        requirements = manager.analyze_purchase_requirements()
+        if any(len(items) > 0 for vendor, items in requirements.items()):
+            orders_needing_po.append({
+                'order': so,
+                'requirements': requirements,
+                'total_needed': sum(len(items) for items in requirements.values())
+            })
+    return orders_needing_po
+
+
+@cached_function(timeout=TIMEOUT_SHORT, prefix="dashboard_stats")
+def get_dashboard_stats():
+    """Get dashboard statistics with caching."""
+    return {
+        'total_orders': SalesOrder.objects.count(),
+        'pending_orders': SalesOrder.objects.filter(doc_status='drafted').count(),
+        'in_progress_orders': SalesOrder.objects.filter(doc_status='in_progress').count(),
+        'completed_orders': SalesOrder.objects.filter(doc_status='complete').count(),
+        'total_invoices': Invoice.objects.count(),
+        'unpaid_invoices': Invoice.objects.filter(is_paid=False).count(),
+    }
 
 
 @login_required
 def sales_dashboard(request):
     """Main sales dashboard with order status overview"""
     
-    # Get sales orders with various statuses
-    pending_orders = SalesOrder.objects.filter(doc_status='drafted').order_by('-date_ordered')
-    in_progress_orders = SalesOrder.objects.filter(doc_status='in_progress').order_by('-date_ordered')
+    # Use cached data for better performance
+    pending_orders = get_pending_orders()
+    in_progress_orders = get_in_progress_orders()
+    orders_needing_po = get_orders_needing_po()
+    stats = get_dashboard_stats()
     
-    # Orders needing purchase orders
-    orders_needing_po = []
-    for so in SalesOrder.objects.filter(doc_status__in=['drafted', 'in_progress']):
-        manager = SalesOrderManager(so)
-        requirements = manager.analyze_purchase_requirements()
-        if any(len(items) > 0 for vendor, items in requirements.items()):
-            orders_needing_po.append({
+    # Check if user requested cache refresh
+    if request.GET.get('refresh_cache'):
+        # Clear dashboard caches
+        get_pending_orders.cache_clear()
+        get_in_progress_orders.cache_clear()
+        get_orders_needing_po.cache_clear()
+        get_dashboard_stats.cache_clear()
+        messages.success(request, "Dashboard cache refreshed successfully.")
+        return redirect('sales:dashboard')
+    
+    # Legacy code for orders needing PO (keeping for backward compatibility)
+    legacy_orders_needing_po = []
+    if not orders_needing_po:  # If cache is empty, fall back to legacy method
+        for so in SalesOrder.objects.filter(doc_status__in=['drafted', 'in_progress'])[:10]:
+            manager = SalesOrderManager(so)
+            requirements = manager.analyze_purchase_requirements()
+            if any(len(items) > 0 for vendor, items in requirements.items()):
+                legacy_orders_needing_po.append({
                 'order': so,
                 'vendors_needed': len([v for v in requirements.keys() if v is not None]),
                 'items_without_vendor': len(requirements.get(None, [])),
             })
     
-    # Orders ready to ship/invoice
-    ready_to_ship = SalesOrder.objects.filter(
-        doc_status='in_progress',
-        lines__quantity_delivered__lt=models.F('lines__quantity_ordered')
-    ).distinct()
+    # Orders ready to ship/invoice (use cache for this too)
+    ready_to_ship_key = "dashboard_ready_to_ship"
+    ready_to_ship = cache.get(ready_to_ship_key)
+    if ready_to_ship is None:
+        ready_to_ship = list(SalesOrder.objects.filter(
+            doc_status='in_progress',
+            lines__quantity_delivered__lt=models.F('lines__quantity_ordered')
+        ).distinct()[:20])
+        cache.set(ready_to_ship_key, ready_to_ship, TIMEOUT_SHORT)
     
     context = {
         'pending_orders': pending_orders[:10],
         'in_progress_orders': in_progress_orders[:10],
-        'orders_needing_po': orders_needing_po[:10],
+        'orders_needing_po': (orders_needing_po or legacy_orders_needing_po)[:10],
         'ready_to_ship': ready_to_ship[:10],
         'stats': {
-            'total_pending': pending_orders.count(),
-            'total_in_progress': in_progress_orders.count(),
-            'total_needing_po': len(orders_needing_po),
-            'total_ready_to_ship': ready_to_ship.count(),
+            'total_orders': stats['total_orders'],
+            'total_pending': stats['pending_orders'],
+            'total_in_progress': stats['in_progress_orders'],
+            'total_completed': stats['completed_orders'],
+            'total_invoices': stats['total_invoices'],
+            'unpaid_invoices': stats['unpaid_invoices'],
+            'total_needing_po': len(orders_needing_po or legacy_orders_needing_po),
+            'total_ready_to_ship': len(ready_to_ship),
         }
     }
     
