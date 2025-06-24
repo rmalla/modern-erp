@@ -33,4 +33,8 @@ urlpatterns = [
     
     # AJAX endpoints
     path('ajax/product-search/', views.ajax_product_search, name='ajax_product_search'),
+    
+    # Workflow action endpoints
+    path('admin/invoice/<uuid:invoice_id>/workflow-action/', views.invoice_workflow_action, name='admin:sales_invoice_workflow_action'),
+    path('admin/shipment/<uuid:shipment_id>/workflow-action/', views.shipment_workflow_action, name='admin:sales_shipment_workflow_action'),
 ]

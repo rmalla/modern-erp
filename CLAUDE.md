@@ -2,6 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## System Overview
+
+Modern ERP is a production Django-based enterprise resource planning system built on proven iDempiere patterns with modern technologies. The system features sophisticated approval workflows, comprehensive contact management, professional PDF generation, and enterprise-grade caching.
+
+**Current Status**: Production system running at https://erp.r17a.com with 786+ migrated records from iDempiere, complete workflow system, and unified approval dashboard.
+
 ## Commands
 
 ### Virtual Environment & Basic Setup
@@ -101,6 +107,37 @@ redis-cli -n 3  # Static data
 redis-cli flushall
 ```
 
+### Workflow and Approval Management
+```bash
+# Access central workflow dashboard
+# URL: https://erp.r17a.com/core/workflow/dashboard/
+
+# View approval history across all document types
+# URL: https://erp.r17a.com/core/workflow/history/
+
+# Set up new document type workflows (shell_plus example)
+python manage.py shell_plus -c "
+from core.models import WorkflowDefinition, WorkflowState, WorkflowTransition
+# Create workflow definition for new document type
+# Follow patterns from setup_po_workflow.py examples
+"
+
+# Cache management for workflow performance
+redis-cli -n 1 keys "workflow:*"  # View workflow cache keys
+redis-cli -n 1 del "dashboard_*"  # Clear dashboard cache
+```
+
+### PDF Generation and Documents
+```bash
+# PDF endpoints for business documents
+# Sales Order: /sales/order/{id}/pdf/
+# Purchase Order: /purchasing/purchase-order/{id}/pdf/
+# Invoice: /sales/invoice/{id}/pdf/
+
+# Test PDF generation
+curl -o test.pdf "https://erp.r17a.com/sales/order/{order_id}/pdf/"
+```
+
 ### CRM Opportunity Sync (Regular Operation)
 ```bash
 # Regular sync from CRM system
@@ -114,22 +151,6 @@ python manage.py sync_opportunities_from_crm --limit 100
 
 # Force update existing opportunities
 python manage.py sync_opportunities_from_crm --force
-```
-
-### Legacy Data Migration Scripts (One-time Use)
-```bash
-# Located in scripts/migrations/legacy/
-# Run only during initial data migration
-python scripts/migrations/legacy/migrate_idempiere_data.py
-python scripts/migrations/legacy/migrate_contacts_and_data.py
-python scripts/migrations/legacy/migrate_opportunities_from_crm.py  # Original script
-python scripts/migrations/legacy/migrate_purchase_orders_only.py
-python scripts/migrations/legacy/migrate_sales_orders_only.py
-python scripts/migrations/legacy/migrate_invoices_only.py
-
-# Setup scripts in scripts/setup/
-python scripts/setup/setup_basic_data.py
-python scripts/setup/setup_invoice_workflow.py
 ```
 
 ## File Organization
@@ -231,11 +252,13 @@ The project follows a clean, organized structure separating active code from one
    - Automatic filtering based on user's organization
    - Support for cross-organization reporting with permissions
 
-3. **Workflow Engine**:
-   - Configurable document workflows (Draft → In Progress → Completed)
-   - Approval chains with role-based routing
-   - State transition validations and side effects
-   - Audit trail for all state changes
+3. **Enterprise Workflow Engine**:
+   - Universal document workflow system using Django GenericForeignKey
+   - 6-model architecture: WorkflowDefinition, WorkflowState, WorkflowTransition, DocumentWorkflow, WorkflowApproval, UserPermission
+   - Threshold-based approval routing ($1K sales orders, $5K purchase orders)
+   - Progressive field locking based on workflow state
+   - Complete approval audit trail with amount snapshots
+   - Central approval dashboard across all document types
 
 4. **API Design**:
    - RESTful APIs with consistent naming conventions

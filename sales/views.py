@@ -1240,3 +1240,239 @@ def invoice_pdf(request, invoice_id):
     response.write(pdf)
     
     return response
+
+
+@login_required
+def invoice_workflow_action(request, invoice_id):
+    """Handle workflow actions for invoices"""
+    from django.contrib.admin.views.decorators import staff_member_required
+    from django.utils.decorators import method_decorator
+    from django.contrib import messages
+    from django.shortcuts import redirect
+    from django.urls import reverse
+    from django.utils import timezone
+    from core.models import WorkflowState, WorkflowApproval
+    
+    if not request.user.is_staff:
+        messages.error(request, "You must be a staff member to perform this action")
+        return redirect('admin:sales_invoice_changelist')
+    
+    invoice = get_object_or_404(Invoice, pk=invoice_id)
+    action = request.GET.get('action')
+    
+    if not action:
+        messages.error(request, "No action specified")
+        return redirect('admin:sales_invoice_change', invoice.pk)
+    
+    try:
+        # Get workflow instance
+        workflow = invoice.get_workflow_instance()
+        if not workflow:
+            messages.error(request, "No workflow configured for this invoice")
+            return redirect('admin:sales_invoice_change', invoice.pk)
+        
+        current_state = workflow.current_state.name
+        success = False
+        
+        # Execute the action based on current state
+        if action == 'submit_approval' and current_state == 'draft':
+            # Submit for approval
+            pending_state = WorkflowState.objects.get(
+                workflow=workflow.workflow_definition, 
+                name='pending_approval'
+            )
+            workflow.current_state = pending_state
+            workflow.save()
+            
+            # Create approval request
+            WorkflowApproval.objects.create(
+                document_workflow=workflow,
+                requested_by=request.user,
+                status='pending',
+                comments=f'Invoice {invoice.document_no} submitted for approval',
+                requested_at=timezone.now()
+            )
+            messages.success(request, f'Invoice {invoice.document_no} submitted for approval')
+            success = True
+            
+        elif action == 'auto_approve' and current_state == 'draft':
+            # Auto-approve under threshold
+            approved_state = WorkflowState.objects.get(
+                workflow=workflow.workflow_definition, 
+                name='approved'
+            )
+            workflow.current_state = approved_state
+            workflow.save()
+            
+            WorkflowApproval.objects.create(
+                document_workflow=workflow,
+                requested_by=request.user,
+                approver=request.user,
+                status='approved',
+                comments=f'Invoice {invoice.document_no} auto-approved (under threshold)',
+                requested_at=timezone.now(),
+                responded_at=timezone.now()
+            )
+            messages.success(request, f'Invoice {invoice.document_no} approved automatically')
+            success = True
+            
+        elif action == 'approve' and current_state == 'pending_approval':
+            # Approve pending invoice
+            approved_state = WorkflowState.objects.get(
+                workflow=workflow.workflow_definition, 
+                name='approved'
+            )
+            workflow.current_state = approved_state
+            workflow.save()
+            
+            # Update the pending approval
+            pending_approval = WorkflowApproval.objects.filter(
+                document_workflow=workflow,
+                status='pending'
+            ).first()
+            if pending_approval:
+                pending_approval.approver = request.user
+                pending_approval.status = 'approved'
+                pending_approval.responded_at = timezone.now()
+                pending_approval.save()
+            
+            messages.success(request, f'Invoice {invoice.document_no} approved')
+            success = True
+            
+        elif action == 'send_invoice' and current_state == 'approved':
+            # Send invoice to customer
+            sent_state = WorkflowState.objects.get(
+                workflow=workflow.workflow_definition, 
+                name='sent'
+            )
+            workflow.current_state = sent_state
+            workflow.save()
+            messages.success(request, f'Invoice {invoice.document_no} marked as sent')
+            success = True
+            
+        elif action == 'full_payment' and current_state == 'sent':
+            # Record full payment
+            paid_state = WorkflowState.objects.get(
+                workflow=workflow.workflow_definition, 
+                name='paid'
+            )
+            workflow.current_state = paid_state
+            workflow.save()
+            
+            # Update payment fields
+            invoice.paid_amount = invoice.grand_total
+            invoice.open_amount = 0
+            invoice.is_paid = True
+            invoice.save()
+            
+            messages.success(request, f'Payment recorded for invoice {invoice.document_no}')
+            success = True
+        
+        if not success:
+            messages.warning(request, f'Action "{action}" not available for current state "{current_state}"')
+            
+    except Exception as e:
+        messages.error(request, f'Error executing workflow action: {str(e)}')
+    
+    return redirect('admin:sales_invoice_change', invoice.pk)
+
+
+@login_required  
+def shipment_workflow_action(request, shipment_id):
+    """Handle workflow actions for shipments"""
+    from django.contrib.admin.views.decorators import staff_member_required
+    from django.utils.decorators import method_decorator
+    from django.contrib import messages
+    from django.shortcuts import redirect
+    from django.urls import reverse
+    from django.utils import timezone
+    from core.models import WorkflowState, WorkflowApproval
+    
+    if not request.user.is_staff:
+        messages.error(request, "You must be a staff member to perform this action")
+        return redirect('admin:sales_shipment_changelist')
+    
+    shipment = get_object_or_404(Shipment, pk=shipment_id)
+    action = request.GET.get('action')
+    
+    if not action:
+        messages.error(request, "No action specified")
+        return redirect('admin:sales_shipment_change', shipment.pk)
+    
+    try:
+        # Get workflow instance
+        workflow = shipment.get_workflow_instance()
+        if not workflow:
+            messages.error(request, "No workflow configured for this shipment")
+            return redirect('admin:sales_shipment_change', shipment.pk)
+        
+        current_state = workflow.current_state.name
+        success = False
+        
+        # Execute the action based on current state
+        if action == 'prepare' and current_state == 'draft':
+            # Prepare shipment
+            prepared_state = WorkflowState.objects.get(
+                workflow=workflow.workflow_definition, 
+                name='prepared'
+            )
+            workflow.current_state = prepared_state
+            workflow.save()
+            messages.success(request, f'Shipment {shipment.document_no} prepared for shipping')
+            success = True
+            
+        elif action == 'ship' and current_state == 'prepared':
+            # Ship the package
+            in_transit_state = WorkflowState.objects.get(
+                workflow=workflow.workflow_definition, 
+                name='in_transit'
+            )
+            workflow.current_state = in_transit_state
+            workflow.save()
+            
+            # Update shipment flags
+            shipment.is_in_transit = True
+            shipment.save()
+            
+            messages.success(request, f'Shipment {shipment.document_no} is now in transit')
+            success = True
+            
+        elif action == 'deliver' and current_state == 'in_transit':
+            # Mark as delivered
+            delivered_state = WorkflowState.objects.get(
+                workflow=workflow.workflow_definition, 
+                name='delivered'
+            )
+            workflow.current_state = delivered_state
+            workflow.save()
+            
+            # Update delivery fields
+            shipment.date_received = timezone.now().date()
+            shipment.is_in_transit = False
+            shipment.save()
+            
+            messages.success(request, f'Shipment {shipment.document_no} marked as delivered')
+            success = True
+            
+        elif action == 'complete' and current_state == 'delivered':
+            # Complete the shipment
+            complete_state = WorkflowState.objects.get(
+                workflow=workflow.workflow_definition, 
+                name='complete'
+            )
+            workflow.current_state = complete_state
+            workflow.save()
+            
+            shipment.doc_status = 'complete'
+            shipment.save()
+            
+            messages.success(request, f'Shipment {shipment.document_no} completed')
+            success = True
+        
+        if not success:
+            messages.warning(request, f'Action "{action}" not available for current state "{current_state}"')
+            
+    except Exception as e:
+        messages.error(request, f'Error executing workflow action: {str(e)}')
+    
+    return redirect('admin:sales_shipment_change', shipment.pk)

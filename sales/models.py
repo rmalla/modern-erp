@@ -426,6 +426,73 @@ class Invoice(BaseModel):
             except (WorkflowDefinition.DoesNotExist, WorkflowState.DoesNotExist):
                 # Workflow not configured yet
                 return None
+    
+    def needs_approval(self):
+        """Check if this invoice needs approval based on amount"""
+        workflow = self.get_workflow_instance()
+        if not workflow or not workflow.workflow_definition.requires_approval:
+            return False
+        
+        threshold = workflow.workflow_definition.approval_threshold_amount
+        if threshold and self.grand_total.amount >= threshold:
+            return True
+        
+        return False
+    
+    def can_reactivate(self):
+        """Check if this invoice can be reactivated"""
+        return self.doc_status in ['paid', 'closed']
+    
+    def reactivate(self, user=None):
+        """
+        Reactivate a paid or closed invoice.
+        Changes status back to 'sent' and resets workflow if applicable.
+        """
+        if not self.can_reactivate():
+            raise ValueError(f"Cannot reactivate invoice with status '{self.doc_status}'")
+        
+        # Store original status for logging
+        original_status = self.doc_status
+        
+        # Change status back to sent
+        self.doc_status = 'sent'
+        
+        # Reset workflow state if workflow exists
+        workflow_instance = self.get_workflow_instance()
+        if workflow_instance and workflow_instance.workflow_definition:
+            try:
+                from core.models import WorkflowState
+                sent_state = WorkflowState.objects.get(
+                    workflow=workflow_instance.workflow_definition,
+                    name='sent'
+                )
+                workflow_instance.current_state = sent_state
+                workflow_instance.save()
+            except WorkflowState.DoesNotExist:
+                # If no sent state, try to find approved state
+                try:
+                    approved_state = WorkflowState.objects.get(
+                        workflow=workflow_instance.workflow_definition,
+                        name='approved'
+                    )
+                    workflow_instance.current_state = approved_state
+                    workflow_instance.save()
+                except WorkflowState.DoesNotExist:
+                    pass  # No workflow states available
+        
+        # Reset payment-related fields
+        if original_status == 'paid':
+            self.paid_amount = 0
+            self.open_amount = self.grand_total
+        
+        # Update audit fields
+        if user:
+            self.updated_by = user
+        
+        # Save the changes
+        self.save()
+        
+        return f"Invoice {self.document_no} reactivated from '{original_status}' to 'sent'"
 
 
 class InvoiceLine(BaseModel):
@@ -536,6 +603,96 @@ class Shipment(BaseModel):
         
     def __str__(self):
         return f"{self.document_no} - {self.business_partner.name}"
+    
+    def get_workflow_instance(self):
+        """Get or create workflow instance for this shipment"""
+        from django.contrib.contenttypes.models import ContentType
+        from core.models import DocumentWorkflow, WorkflowDefinition, WorkflowState
+        
+        content_type = ContentType.objects.get_for_model(self)
+        
+        try:
+            return DocumentWorkflow.objects.get(
+                content_type=content_type,
+                object_id=self.pk
+            )
+        except DocumentWorkflow.DoesNotExist:
+            # Create workflow instance if it doesn't exist
+            try:
+                workflow_def = WorkflowDefinition.objects.get(document_type='shipment')
+                initial_state = WorkflowState.objects.get(
+                    workflow=workflow_def, 
+                    name=workflow_def.initial_state
+                )
+                
+                return DocumentWorkflow.objects.create(
+                    content_type=content_type,
+                    object_id=self.pk,
+                    workflow_definition=workflow_def,
+                    current_state=initial_state
+                )
+            except (WorkflowDefinition.DoesNotExist, WorkflowState.DoesNotExist):
+                # Workflow not configured yet
+                return None
+    
+    def needs_approval(self):
+        """Check if this shipment needs approval - shipments generally don't need approval"""
+        return False
+    
+    def can_reactivate(self):
+        """Check if this shipment can be reactivated"""
+        return self.doc_status in ['complete', 'closed']
+    
+    def reactivate(self, user=None):
+        """
+        Reactivate a completed or closed shipment.
+        Changes status back to 'in_progress' and resets workflow if applicable.
+        """
+        if not self.can_reactivate():
+            raise ValueError(f"Cannot reactivate shipment with status '{self.doc_status}'")
+        
+        # Store original status for logging
+        original_status = self.doc_status
+        
+        # Change status back to in_progress
+        self.doc_status = 'in_progress'
+        
+        # Reset workflow state if workflow exists
+        workflow_instance = self.get_workflow_instance()
+        if workflow_instance and workflow_instance.workflow_definition:
+            try:
+                from core.models import WorkflowState
+                in_progress_state = WorkflowState.objects.get(
+                    workflow=workflow_instance.workflow_definition,
+                    name='in_progress'
+                )
+                workflow_instance.current_state = in_progress_state
+                workflow_instance.save()
+            except WorkflowState.DoesNotExist:
+                # If no in_progress state, try to find initial state
+                try:
+                    initial_state = WorkflowState.objects.get(
+                        workflow=workflow_instance.workflow_definition,
+                        name=workflow_instance.workflow_definition.initial_state
+                    )
+                    workflow_instance.current_state = initial_state
+                    workflow_instance.save()
+                except WorkflowState.DoesNotExist:
+                    pass  # No workflow states available
+        
+        # Reset tracking information if needed
+        if original_status == 'complete':
+            self.date_received = None
+            self.is_in_transit = True
+        
+        # Update audit fields
+        if user:
+            self.updated_by = user
+        
+        # Save the changes
+        self.save()
+        
+        return f"Shipment {self.document_no} reactivated from '{original_status}' to 'in_progress'"
 
 
 class ShipmentLine(BaseModel):

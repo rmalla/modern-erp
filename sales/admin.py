@@ -1520,8 +1520,15 @@ class ShipmentAdmin(admin.ModelAdmin):
         ('Flags', {
             'fields': ('is_printed', 'is_in_transit')
         }),
+        ('Workflow & Status', {
+            'fields': (
+                ('current_workflow_state', 'workflow_actions'),
+            ),
+            'classes': ('wide',),
+            'description': 'Shipment workflow and status management'
+        }),
     )
-    readonly_fields = ('business_partner_address_display',)
+    readonly_fields = ('business_partner_address_display', 'current_workflow_state', 'workflow_actions')
     
     def business_partner_address_display(self, obj):
         """Display ship-to address with customer name"""
@@ -1529,6 +1536,113 @@ class ShipmentAdmin(admin.ModelAdmin):
             return obj.business_partner_location.full_address_with_name
         return "-"
     business_partner_address_display.short_description = "Ship To Address"
+    
+    def current_workflow_state(self, obj):
+        """Display current workflow state with visual indicator"""
+        if not obj.pk:
+            return '-'
+        
+        workflow = obj.get_workflow_instance()
+        if not workflow:
+            return 'No workflow configured'
+        
+        state_colors = {
+            'draft': '#6c757d',           # Gray
+            'prepared': '#fd7e14',        # Orange  
+            'in_transit': '#0d6efd',      # Blue
+            'delivered': '#20c997',       # Teal
+            'complete': '#198754',        # Green
+            'returned': '#ffc107',        # Yellow
+            'cancelled': '#495057',       # Dark gray
+        }
+        
+        color = state_colors.get(workflow.current_state.name, '#6c757d')
+        
+        return format_html(
+            '<span style="background-color: {}; color: white; padding: 4px 8px; '
+            'border-radius: 4px; font-weight: bold;">{}</span>',
+            color, workflow.current_state.display_name
+        )
+    current_workflow_state.short_description = 'Workflow State'
+    
+    def workflow_actions(self, obj):
+        """Display workflow action buttons based on current state"""
+        if not obj.pk:
+            return '-'
+        
+        workflow = obj.get_workflow_instance()
+        if not workflow:
+            return 'No workflow configured'
+        
+        buttons = []
+        current_state = workflow.current_state.name
+        
+        # State-specific buttons for shipments
+        if current_state == 'draft':
+            buttons.append(self._create_shipment_workflow_button(
+                'Prepare Shipment', 'prepare', obj.pk, 'blue'
+            ))
+            buttons.append(self._create_shipment_workflow_button(
+                'Cancel', 'cancel', obj.pk, 'red'
+            ))
+        
+        elif current_state == 'prepared':
+            buttons.append(self._create_shipment_workflow_button(
+                'Ship', 'ship', obj.pk, 'blue'
+            ))
+            buttons.append(self._create_shipment_workflow_button(
+                'Cancel', 'cancel_prepared', obj.pk, 'red'
+            ))
+        
+        elif current_state == 'in_transit':
+            buttons.append(self._create_shipment_workflow_button(
+                'Mark Delivered', 'deliver', obj.pk, 'green'
+            ))
+            buttons.append(self._create_shipment_workflow_button(
+                'Mark Returned', 'return_shipment', obj.pk, 'orange'
+            ))
+        
+        elif current_state == 'delivered':
+            buttons.append(self._create_shipment_workflow_button(
+                'Complete', 'complete', obj.pk, 'green'
+            ))
+            buttons.append(self._create_shipment_workflow_button(
+                'Process Return', 'process_return', obj.pk, 'orange'
+            ))
+        
+        elif current_state == 'returned':
+            buttons.append(self._create_shipment_workflow_button(
+                'Reship', 'reship', obj.pk, 'blue'
+            ))
+            buttons.append(self._create_shipment_workflow_button(
+                'Cancel Order', 'cancel_order', obj.pk, 'red'
+            ))
+        
+        if buttons:
+            return format_html(' '.join(buttons))
+        return 'No actions available'
+    
+    workflow_actions.short_description = 'Workflow Actions'
+    
+    def _create_shipment_workflow_button(self, label, action, obj_id, color):
+        """Create workflow action button for shipments"""
+        colors = {
+            'blue': '#007cba',
+            'green': '#28a745', 
+            'orange': '#fd7e14',
+            'red': '#dc3545',
+            'gray': '#6c757d'
+        }
+        
+        return format_html(
+            '<a href="{}?action={}" style="background-color: {}; color: white; '
+            'padding: 4px 8px; text-decoration: none; border-radius: 3px; '
+            'margin-right: 5px; font-size: 11px;">{}</a>',
+            reverse('admin:sales_shipment_workflow_action', args=[obj_id]),
+            action,
+            colors.get(color, '#007cba'),
+            label
+        )
 
 
 @admin.register(models.ShipmentLine)

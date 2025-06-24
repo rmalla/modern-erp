@@ -128,6 +128,107 @@ class PurchaseOrder(BaseModel):
                 pass
         
         return "PO-000001"
+    
+    # =============================================================================
+    # WORKFLOW METHODS (copied from SalesOrder pattern)
+    # =============================================================================
+    
+    def get_workflow_instance(self):
+        """Get or create workflow instance for this purchase order"""
+        from django.contrib.contenttypes.models import ContentType
+        from core.models import DocumentWorkflow, WorkflowDefinition, WorkflowState
+        
+        content_type = ContentType.objects.get_for_model(self)
+        
+        try:
+            return DocumentWorkflow.objects.get(
+                content_type=content_type,
+                object_id=self.pk
+            )
+        except DocumentWorkflow.DoesNotExist:
+            # Create workflow instance if it doesn't exist
+            try:
+                workflow_def = WorkflowDefinition.objects.get(document_type='purchase_order')
+                initial_state = WorkflowState.objects.get(
+                    workflow=workflow_def, 
+                    name=workflow_def.initial_state
+                )
+                
+                return DocumentWorkflow.objects.create(
+                    content_type=content_type,
+                    object_id=self.pk,
+                    workflow_definition=workflow_def,
+                    current_state=initial_state
+                )
+            except (WorkflowDefinition.DoesNotExist, WorkflowState.DoesNotExist):
+                # Workflow not configured yet
+                return None
+    
+    def needs_approval(self):
+        """Check if this purchase order needs approval based on amount"""
+        workflow = self.get_workflow_instance()
+        if not workflow or not workflow.workflow_definition.requires_approval:
+            return False
+        
+        threshold = workflow.workflow_definition.approval_threshold_amount
+        if threshold and self.grand_total.amount >= threshold.amount:
+            return True
+        
+        return False
+    
+    def can_reactivate(self):
+        """Check if this purchase order can be reactivated"""
+        return self.doc_status in ['complete', 'closed']
+    
+    def reactivate(self, user=None):
+        """
+        Reactivate a completed or closed purchase order.
+        Changes status back to 'in_progress' and resets workflow if applicable.
+        """
+        if not self.can_reactivate():
+            raise ValueError(f"Cannot reactivate purchase order with status '{self.doc_status}'")
+        
+        # Store original status for logging
+        original_status = self.doc_status
+        
+        # Change status back to in_progress
+        self.doc_status = 'in_progress'
+        
+        # Reset workflow state if workflow exists
+        workflow_instance = self.get_workflow_instance()
+        if workflow_instance and workflow_instance.workflow_definition:
+            try:
+                from core.models import WorkflowState
+                in_progress_state = WorkflowState.objects.get(
+                    workflow=workflow_instance.workflow_definition,
+                    name='in_progress'
+                )
+                workflow_instance.current_state = in_progress_state
+                workflow_instance.save()
+            except WorkflowState.DoesNotExist:
+                # If no in_progress state, try to find initial state
+                try:
+                    initial_state = WorkflowState.objects.get(
+                        workflow=workflow_instance.workflow_definition,
+                        name=workflow_instance.workflow_definition.initial_state
+                    )
+                    workflow_instance.current_state = initial_state
+                    workflow_instance.save()
+                except WorkflowState.DoesNotExist:
+                    pass  # No workflow states available
+        
+        # Clear some completion-related fields if needed
+        if original_status == 'complete':
+            self.date_received = None
+        
+        # Update audit fields
+        if user:
+            self.updated_by = user
+        
+        # Save the changes
+        self.save()
+        
+        return f"Purchase order {self.document_no} reactivated from '{original_status}' to 'in_progress'"
 
 
 class PurchaseOrderLine(BaseModel):
