@@ -1,5 +1,6 @@
 """
 Django admin configuration for purchasing models.
+Updated: 2025-06-24 13:01 - Added Purchase Order PDF functionality
 """
 
 from django.contrib import admin
@@ -23,19 +24,19 @@ class DocumentContactForm(forms.ModelForm):
             )
             self.fields['contact'].help_text = f"Contacts for {self.instance.business_partner.name}"
             
-            # Filter locations for bill_to and ship_to
+            # Filter locations for bill_to (vendor addresses)
             from core.models import BusinessPartnerLocation
-            locations = BusinessPartnerLocation.objects.filter(
+            vendor_locations = BusinessPartnerLocation.objects.filter(
                 business_partner=self.instance.business_partner
             )
             
-            if 'bill_to_address' in self.fields:
-                self.fields['bill_to_address'].queryset = locations
-                self.fields['bill_to_address'].help_text = f"Addresses for {self.instance.business_partner.name}"
+            if 'bill_to_location' in self.fields:
+                self.fields['bill_to_location'].queryset = vendor_locations
+                self.fields['bill_to_location'].help_text = f"Vendor addresses for {self.instance.business_partner.name}"
             
-            if 'ship_to_address' in self.fields:
-                self.fields['ship_to_address'].queryset = locations
-                self.fields['ship_to_address'].help_text = f"Addresses for {self.instance.business_partner.name}"
+            if 'business_partner_location' in self.fields:
+                self.fields['business_partner_location'].queryset = vendor_locations
+                self.fields['business_partner_location'].help_text = f"Primary vendor address for {self.instance.business_partner.name}"
                 
         else:
             # No business partner selected, clear all dependent fields
@@ -44,13 +45,29 @@ class DocumentContactForm(forms.ModelForm):
             
             from core.models import BusinessPartnerLocation
             
-            if 'bill_to_address' in self.fields:
-                self.fields['bill_to_address'].queryset = BusinessPartnerLocation.objects.none()
-                self.fields['bill_to_address'].help_text = "Save with a business partner first to see available addresses"
+            if 'bill_to_location' in self.fields:
+                self.fields['bill_to_location'].queryset = BusinessPartnerLocation.objects.none()
+                self.fields['bill_to_location'].help_text = "Save with a vendor first to see available addresses"
             
-            if 'ship_to_address' in self.fields:
-                self.fields['ship_to_address'].queryset = BusinessPartnerLocation.objects.none()
-                self.fields['ship_to_address'].help_text = "Save with a business partner first to see available addresses"
+            if 'business_partner_location' in self.fields:
+                self.fields['business_partner_location'].queryset = BusinessPartnerLocation.objects.none()
+                self.fields['business_partner_location'].help_text = "Save with a vendor first to see available addresses"
+        
+        # Handle ship-to customer filtering separately
+        if hasattr(self.instance, 'ship_to_customer') and self.instance.ship_to_customer:
+            from core.models import BusinessPartnerLocation
+            customer_locations = BusinessPartnerLocation.objects.filter(
+                business_partner=self.instance.ship_to_customer
+            )
+            
+            if 'ship_to_location' in self.fields:
+                self.fields['ship_to_location'].queryset = customer_locations
+                self.fields['ship_to_location'].help_text = f"Customer addresses for {self.instance.ship_to_customer.name}"
+        else:
+            if 'ship_to_location' in self.fields:
+                from core.models import BusinessPartnerLocation
+                self.fields['ship_to_location'].queryset = BusinessPartnerLocation.objects.none()
+                self.fields['ship_to_location'].help_text = "Select a ship-to customer first to see available addresses"
 
 
 class PurchaseOrderForm(DocumentContactForm):
@@ -68,12 +85,19 @@ class PurchaseOrderLineInline(admin.TabularInline):
 @admin.register(models.PurchaseOrder)
 class PurchaseOrderAdmin(admin.ModelAdmin):
     form = PurchaseOrderForm
-    list_display = ('document_no', 'opportunity', 'business_partner', 'date_ordered', 'doc_status', 'grand_total', 'is_received', 'is_invoiced')
+    list_display = ('document_no', 'opportunity', 'business_partner', 'date_ordered', 'doc_status', 'grand_total', 'is_received', 'is_invoiced', 'pdf_link')
     list_filter = ('doc_status', 'opportunity', 'organization', 'warehouse', 'is_received', 'is_invoiced', 'is_drop_ship')
     search_fields = ('document_no', 'opportunity__opportunity_number', 'business_partner__name', 'vendor_reference', 'description')
     date_hierarchy = 'date_ordered'
     inlines = [PurchaseOrderLineInline]
-    autocomplete_fields = ['opportunity', 'business_partner']
+    autocomplete_fields = ['opportunity', 'business_partner', 'ship_to_customer']
+    
+    def pdf_link(self, obj):
+        """Generate PDF link for the purchase order"""
+        from django.urls import reverse
+        url = reverse('purchasing:purchase_order_pdf', args=[obj.pk])
+        return format_html('<a href="{}" target="_blank" style="color: #1a5490; font-weight: bold;">📄 PDF</a>', url)
+    pdf_link.short_description = "PDF"
     
     fieldsets = (
         ('Purchase Order Header', {
@@ -99,15 +123,17 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
             ),
             'classes': ('wide',)
         }),
-        ('Vendor Details', {
+        ('Address Information', {
             'fields': (
                 ('vendor_reference', 'buyer'),
                 ('business_partner_location', 'business_partner_address_display'),
                 ('bill_to_location', 'bill_to_address_display'),
-                ('ship_to_location', 'ship_to_address_display'),
+                ('ship_to_customer', 'ship_to_location'),
+                ('ship_to_address_display',),
                 ('bill_to_address', 'ship_to_address'),
             ),
-            'classes': ('wide',)
+            'classes': ('wide',),
+            'description': 'Ship-to Customer: Select customer for direct shipment | Ship-to Location: Customer address (save with customer first to see options)'
         }),
         ('Pricing', {
             'fields': (
@@ -134,6 +160,7 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     )
     readonly_fields = ('total_lines', 'grand_total', 'business_partner_address_display', 'bill_to_address_display', 'ship_to_address_display')
     
+    
     def business_partner_address_display(self, obj):
         """Display business partner location with vendor name"""
         if obj.business_partner_location:
@@ -149,9 +176,11 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     bill_to_address_display.short_description = "Bill To Address"
     
     def ship_to_address_display(self, obj):
-        """Display ship to location with vendor name"""
+        """Display ship to location with customer name"""
         if obj.ship_to_location:
             return obj.ship_to_location.full_address_with_name
+        elif obj.ship_to_customer:
+            return f"Customer: {obj.ship_to_customer.name} (no address selected)"
         return "-"
     ship_to_address_display.short_description = "Ship To Address"
 

@@ -55,9 +55,15 @@ class PurchaseOrder(BaseModel):
     bill_to_location = models.ForeignKey(BusinessPartnerLocation, on_delete=models.SET_NULL,
                                         null=True, blank=True, related_name='purchase_orders_bill_to',
                                         help_text="Billing address")
+    
+    # Customer shipping information (for direct-to-customer shipments)
+    ship_to_customer = models.ForeignKey(BusinessPartner, on_delete=models.SET_NULL,
+                                        null=True, blank=True, related_name='purchase_orders_ship_to_customer',
+                                        limit_choices_to={'is_customer': True},
+                                        help_text="Customer to ship to (for direct shipments)")
     ship_to_location = models.ForeignKey(BusinessPartnerLocation, on_delete=models.SET_NULL,
                                         null=True, blank=True, related_name='purchase_orders_ship_to',
-                                        help_text="Shipping address")
+                                        help_text="Shipping address (filtered by ship-to customer)")
     
     # Legacy address fields (for backward compatibility)
     bill_to_address = models.TextField(blank=True, help_text="Legacy billing address text")

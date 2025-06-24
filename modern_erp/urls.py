@@ -24,5 +24,6 @@ def redirect_to_sales(request):
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('sales/', include('sales.urls')),
+    path('purchasing/', include('purchasing.urls')),
     path('', redirect_to_sales),  # Redirect root to sales dashboard
 ]

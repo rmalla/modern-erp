@@ -105,7 +105,12 @@ def clear_dashboard_cache():
     ]
     
     for key in cache_keys:
-        cache.delete_pattern(f"{key}:*")
+        # Safe delete_pattern that works with DummyCache
+        try:
+            cache.delete_pattern(f"{key}:*")
+        except AttributeError:
+            # DummyCache doesn't have delete_pattern, just delete individual keys
+            cache.delete(key)
     
     logger.debug("Cleared dashboard cache")
 
@@ -122,7 +127,12 @@ def clear_all_model_cache():
     ]
     
     for pattern in patterns:
-        cache.delete_pattern(pattern)
+        # Safe delete_pattern that works with DummyCache
+        try:
+            cache.delete_pattern(pattern)
+        except AttributeError:
+            # DummyCache doesn't have delete_pattern, skip pattern-based clearing
+            pass
     
     logger.info("Cleared all model cache")
 

@@ -65,7 +65,16 @@ def cached_function(timeout=TIMEOUT_MEDIUM, cache_alias=DEFAULT_CACHE, prefix=No
             return result
         
         # Add cache management methods to function
-        wrapper.cache_clear = lambda: cache_instance.delete_pattern(f"{key_prefix}:*")
+        def safe_cache_clear():
+            try:
+                cache_instance.delete_pattern(f"{key_prefix}:*")
+            except AttributeError:
+                # DummyCache doesn't have delete_pattern, just clear by key
+                try:
+                    cache_instance.delete(key_prefix)
+                except:
+                    pass
+        wrapper.cache_clear = safe_cache_clear
         wrapper.cache_key = lambda *args, **kwargs: cache_key_generator(key_prefix, *args, **kwargs)
         
         return wrapper
@@ -120,7 +129,11 @@ class ModelCacheManager:
     def invalidate_all(self):
         """Invalidate all cached objects for this model."""
         pattern = f"model:{self.model_name}:*"
-        self.cache.delete_pattern(pattern)
+        try:
+            self.cache.delete_pattern(pattern)
+        except AttributeError:
+            # DummyCache doesn't have delete_pattern, skip pattern-based clearing
+            pass
         logger.debug(f"Invalidated all cache for {self.model_name}")
 
 
