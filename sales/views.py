@@ -7,7 +7,7 @@ User-friendly views for managing the sales process:
 - Multi-vendor PO generation
 - Combined shipping/invoicing
 
-Updated: 2025-06-24 12:30 - Column width adjustments and header line color fix
+Updated: 2025-06-24 12:52 - Added proper labels for Order Number and Order Date in header
 """
 
 from django.shortcuts import render, get_object_or_404, redirect
@@ -432,20 +432,36 @@ def footer_canvas(canvas, doc):
     """Add footer to each page"""
     canvas.saveState()
     
-    # Footer text
-    footer_text = "+1 (305) 3954925 - orders@malla-group.com"
+    # Company information and contact details
+    company_name = "Malla Group LLC"
+    company_address = "1430 Brickell Bay Drive Unit 701, Miami, FL 33131, United States"
+    contact_info = "+1 (305) 3954925 - orders@malla-group.com"
     
     # Set font and size
-    canvas.setFont('Helvetica', 9)
+    canvas.setFont('Helvetica-Bold', 10)
     canvas.setFillColor(colors.HexColor('#666666'))
     
-    # Draw footer centered at bottom
+    # Page dimensions
     page_width = letter[0]
-    text_width = canvas.stringWidth(footer_text, 'Helvetica', 9)
-    x = (page_width - text_width) / 2
-    y = 0.3 * inch
     
-    canvas.drawString(x, y, footer_text)
+    # Draw company name (centered, top line)
+    company_width = canvas.stringWidth(company_name, 'Helvetica-Bold', 10)
+    x = (page_width - company_width) / 2
+    y = 0.5 * inch
+    canvas.drawString(x, y, company_name)
+    
+    # Draw address (centered, middle line)
+    canvas.setFont('Helvetica', 9)
+    address_width = canvas.stringWidth(company_address, 'Helvetica', 9)
+    x = (page_width - address_width) / 2
+    y = 0.37 * inch
+    canvas.drawString(x, y, company_address)
+    
+    # Draw contact info (centered, bottom line)
+    contact_width = canvas.stringWidth(contact_info, 'Helvetica', 9)
+    x = (page_width - contact_width) / 2
+    y = 0.24 * inch
+    canvas.drawString(x, y, contact_info)
     
     # Add page number
     page_num = canvas.getPageNumber()
@@ -527,17 +543,24 @@ def sales_order_pdf(request, order_id):
         spaceAfter=10
     )
     
-    # Company information with styled SALES ORDER title
-    sales_order_title = Paragraph("SALES ORDER", title_header_style)
-    company_info = """<b>Malla Group LLC</b><br/>
-    1430 Brickell Bay Drive Unit 701<br/>
-    Miami, FL, 33131<br/>
-    United States"""
+    # Order info style for below title
+    order_info_style = ParagraphStyle(
+        'OrderInfo',
+        parent=styles['Normal'],
+        fontSize=11,
+        alignment=TA_RIGHT,
+        spaceAfter=5
+    )
     
-    # Create a nested table for the right column
+    # Create sales order title with order number and date below it
+    sales_order_title = Paragraph("SALES ORDER", title_header_style)
+    order_info = f"<b>Order Number:</b> SO #{order.document_no}<br/><b>Order Date:</b> {order.date_ordered.strftime('%Y-%m-%d') if order.date_ordered else ''}"
+    order_info_para = Paragraph(order_info, order_info_style)
+    
+    # Create a nested table for the right column (title + order info only)
     right_column = Table([
         [sales_order_title],
-        [Paragraph(company_info, company_style)]
+        [order_info_para]
     ], colWidths=[4*inch])
     right_column.setStyle(TableStyle([
         ('ALIGN', (0, 0), (-1, -1), 'RIGHT'),
@@ -568,9 +591,8 @@ def sales_order_pdf(request, order_id):
         if order.internal_user.email:
             malla_contact_info += f" ({order.internal_user.email})"
     
-    # Build header data starting with core fields
+    # Build header data starting with core fields (removed Order Number and Date since they're now in title area)
     header_data = [
-        ['Order Number:', f'SO #{order.document_no}', 'Date:', order.date_ordered.strftime('%Y-%m-%d') if order.date_ordered else ''],
         ['Customer:', order.business_partner.name if order.business_partner else '', 'Customer PO:', order.customer_po_reference or ''],
         ['Customer Contact:', customer_contact_info, '', ''],
         ['Malla Contact:', malla_contact_info, '', ''],
