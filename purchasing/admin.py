@@ -141,7 +141,7 @@ class PurchaseOrderLineInline(admin.TabularInline):
 @admin.register(models.PurchaseOrder)
 class PurchaseOrderAdmin(admin.ModelAdmin):
     form = PurchaseOrderForm
-    list_display = ('document_no', 'opportunity', 'business_partner', 'date_ordered', 'workflow_state_display', 'lock_status', 'grand_total', 'is_received', 'is_invoiced', 'pdf_link')
+    list_display = ('document_no_display', 'opportunity', 'business_partner', 'date_ordered', 'workflow_state_display', 'lock_status', 'grand_total', 'is_received', 'is_invoiced', 'pdf_link')
     list_filter = ('doc_status', 'opportunity', 'organization', 'warehouse', 'is_received', 'is_invoiced', 'is_drop_ship')
     search_fields = ('document_no', 'opportunity__opportunity_number', 'business_partner__name', 'vendor_reference', 'description')
     date_hierarchy = 'date_ordered'
@@ -247,6 +247,14 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
             return format_html('<span style="font-size: 14px;" title="Document is editable">✏️</span>')
     lock_status.short_description = 'Lock'
     
+    def document_no_display(self, obj):
+        """Display document number with PO- prefix"""
+        if obj.document_no and obj.document_no.isdigit():
+            return f"PO-{obj.document_no}"
+        return obj.document_no
+    document_no_display.short_description = 'Document No'
+    document_no_display.admin_order_field = 'document_no'
+    
     def pdf_link(self, obj):
         """Generate PDF link for the purchase order"""
         from django.urls import reverse
@@ -255,6 +263,13 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     pdf_link.short_description = "PDF"
     
     fieldsets = (
+        ('Document Number', {
+            'fields': (
+                'document_no',
+            ),
+            'classes': ('wide',),
+            'description': 'Document number is auto-generated when the purchase order is saved'
+        }),
         ('Purchase Order Header', {
             'fields': (
                 ('business_partner', 'opportunity'),
@@ -273,8 +288,8 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
         }),
         ('Document Information', {
             'fields': (
-                ('organization', 'document_no'),
-                ('description', 'doc_status'),
+                ('organization', 'doc_status'),
+                ('description',),
             ),
             'classes': ('wide',)
         }),
@@ -321,7 +336,7 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
             'classes': ('wide',)
         }),
     )
-    readonly_fields = ('total_lines', 'grand_total', 'business_partner_address_display', 'bill_to_address_display', 'ship_to_address_display', 'current_workflow_state', 'workflow_actions', 'approval_status_display')
+    readonly_fields = ('document_no', 'total_lines', 'grand_total', 'business_partner_address_display', 'bill_to_address_display', 'ship_to_address_display', 'current_workflow_state', 'workflow_actions', 'approval_status_display')
     
     
     def business_partner_address_display(self, obj):

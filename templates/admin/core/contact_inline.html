@@ -1,0 +1,121 @@
+{% load i18n admin_urls static admin_modify %}
+
+<div class="inline-group" id="{{ inline_admin_formset.formset.prefix }}-group">
+    <div class="tabular inline-related">
+        <fieldset class="module">
+            <h2>{{ inline_admin_formset.opts.verbose_name_plural|capfirst }}</h2>
+            
+            {# Add Contact Button #}
+            {% if original.pk %}
+                <div class="add-contact-section" style="margin-bottom: 15px;">
+                    <a href="{% url 'admin:core_contact_add' %}?business_partner={{ original.pk }}" 
+                       class="addlink" 
+                       target="_blank">
+                        Add {{ inline_admin_formset.opts.verbose_name }}
+                    </a>
+                </div>
+            {% endif %}
+            
+            {% if inline_admin_formset.formset.forms %}
+                <table class="contact-inline-table">
+                    <thead>
+                        <tr>
+                            <th class="contact-name-col">{% trans "Name" %}</th>
+                            <th class="contact-title-col">{% trans "Title" %}</th>
+                            <th class="contact-email-col">{% trans "Email" %}</th>
+                            <th class="contact-phone-col">{% trans "Phone" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for inline_admin_form in inline_admin_formset %}
+                            {% if inline_admin_form.original %}
+                                <tr class="form-row {% cycle 'row1' 'row2' %} readonly-contact-row">
+                                    <td class="field-contact_link contact-name-col">
+                                        <a href="{% url 'admin:core_contact_change' inline_admin_form.original.pk %}" target="_blank">
+                                            <strong>{{ inline_admin_form.original.name }}</strong>
+                                        </a>
+                                    </td>
+                                    <td class="field-title_display contact-title-col">
+                                        {{ inline_admin_form.original.title|default:"-" }}
+                                    </td>
+                                    <td class="field-email_display contact-email-col">
+                                        {{ inline_admin_form.original.email|default:"-" }}
+                                    </td>
+                                    <td class="field-phone_display contact-phone-col">
+                                        {{ inline_admin_form.original.phone|default:"-" }}
+                                    </td>
+                                </tr>
+                            {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="no-contacts-message" style="padding: 20px; text-align: center; color: #666; font-style: italic; background-color: #f9f9f9; border: 1px dashed #ddd; margin: 10px 0;">
+                    No contacts added yet.
+                </div>
+            {% endif %}
+            
+            {# Hidden management form fields #}
+            {{ inline_admin_formset.formset.management_form }}
+            {% for inline_admin_form in inline_admin_formset %}
+                {% for hidden in inline_admin_form.form.hidden_fields %}
+                    {{ hidden }}
+                {% endfor %}
+            {% endfor %}
+        </fieldset>
+    </div>
+</div>
+
+<style>
+.readonly-contact-row td {
+    padding: 8px 12px;
+    vertical-align: middle;
+    background-color: #f8f9fa;
+}
+
+.readonly-contact-row:nth-child(even) td {
+    background-color: #ffffff;
+}
+
+.readonly-contact-row a {
+    color: #007bff;
+    text-decoration: none;
+}
+
+.readonly-contact-row a:hover {
+    color: #0056b3;
+    text-decoration: underline;
+}
+
+.contact-flag {
+    display: inline-block;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: bold;
+    text-transform: uppercase;
+    margin-right: 4px;
+}
+
+.contact-flag.sales {
+    background-color: #28a745;
+    color: white;
+}
+
+.contact-flag.billing {
+    background-color: #007bff;
+    color: white;
+}
+
+.contact-flag.shipping {
+    background-color: #ffc107;
+    color: #212529;
+}
+
+.add-contact-section .addlink {
+    background: url("{% static "admin/img/icon-addlink.svg" %}") 0 1px no-repeat;
+    padding-left: 16px;
+    font-size: 13px;
+    line-height: 16px;
+}
+</style>

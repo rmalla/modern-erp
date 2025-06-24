@@ -11,6 +11,7 @@ from collections import defaultdict
 from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
+from djmoney.money import Money
 
 from .models import SalesOrder, SalesOrderLine
 from purchasing.models import PurchaseOrder, PurchaseOrderLine
@@ -245,6 +246,7 @@ def create_customer_order_from_data(customer, order_data, user):
                     quantity_ordered=Decimal(str(item_data['quantity'])),
                     price_entered=product.list_price,
                     price_actual=product.list_price,
+                    price_list=product.list_price,
                     description=item_data.get('notes', ''),
                     # Calculate quantity to purchase based on stock
                     quantity_to_purchase=Decimal(str(item_data['quantity'])) if product.is_purchased else 0,
@@ -259,8 +261,9 @@ def create_customer_order_from_data(customer, order_data, user):
                     order=so,
                     line_no=line_no,
                     quantity_ordered=Decimal(str(item_data['quantity'])),
-                    price_entered=0,
-                    price_actual=0,
+                    price_entered=Money(0, 'USD'),
+                    price_actual=Money(0, 'USD'),
+                    price_list=Money(0, 'USD'),
                     description=f"MISSING PRODUCT: {item_data['product_code']} - {item_data.get('notes', '')}",
                     created_by=user,
                     updated_by=user,

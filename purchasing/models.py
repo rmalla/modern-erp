@@ -106,7 +106,9 @@ class PurchaseOrder(BaseModel):
         ordering = ['-date_ordered', 'document_no']
         
     def __str__(self):
-        return f"{self.document_no} - {self.business_partner.name}"
+        # Add PO- prefix for display
+        doc_display = f"PO-{self.document_no}" if self.document_no.isdigit() else self.document_no
+        return f"{doc_display} - {self.business_partner.name}"
     
     def save(self, *args, **kwargs):
         # Auto-generate document number if not provided
@@ -115,19 +117,27 @@ class PurchaseOrder(BaseModel):
         super().save(*args, **kwargs)
     
     def _generate_document_number(self):
-        """Generate next purchase order number in PO-XXXXXX format"""
-        last_po = PurchaseOrder.objects.filter(
-            document_no__startswith='PO-'
-        ).order_by('-document_no').first()
+        """Generate next purchase order number (numeric only)"""
+        import re
         
-        if last_po and last_po.document_no.startswith('PO-'):
-            try:
-                last_num = int(last_po.document_no[3:])  # Remove 'PO-'
-                return f"PO-{last_num + 1:06d}"
-            except ValueError:
-                pass
+        # Find the highest numeric document number
+        max_num = 0
         
-        return "PO-000001"
+        # Get all document numbers
+        for doc_no in PurchaseOrder.objects.all().values_list('document_no', flat=True):
+            if doc_no:
+                # Check if it's purely numeric
+                if doc_no.isdigit():
+                    max_num = max(max_num, int(doc_no))
+                else:
+                    # Extract any numbers from the string (for legacy data)
+                    match = re.search(r'(\d+)', doc_no)
+                    if match:
+                        num = int(match.group(1))
+                        max_num = max(max_num, num)
+        
+        # Return the next number
+        return str(max_num + 1)
     
     # =============================================================================
     # WORKFLOW METHODS (copied from SalesOrder pattern)
@@ -135,6 +145,10 @@ class PurchaseOrder(BaseModel):
     
     def get_workflow_instance(self):
         """Get or create workflow instance for this purchase order"""
+        # Return None if object hasn't been saved yet
+        if self.pk is None:
+            return None
+            
         from django.contrib.contenttypes.models import ContentType
         from core.models import DocumentWorkflow, WorkflowDefinition, WorkflowState
         

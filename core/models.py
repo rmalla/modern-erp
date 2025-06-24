@@ -119,20 +119,11 @@ class BusinessPartner(BaseModel):
     code = models.CharField(max_length=50, unique=True)
     name = models.CharField(max_length=200)
     name2 = models.CharField(max_length=200, blank=True, help_text="Additional name/DBA")
-    search_key = models.CharField(max_length=100, unique=True)
     partner_type = models.CharField(max_length=20, choices=PARTNER_TYPES, default='customer')
     
     # Contact information
-    address_line1 = models.CharField(max_length=200, blank=True)
-    address_line2 = models.CharField(max_length=200, blank=True)
-    city = models.CharField(max_length=100, blank=True)
-    state = models.CharField(max_length=100, blank=True)
-    postal_code = models.CharField(max_length=20, blank=True)
     country = models.CharField(max_length=100, default='United States')
-    
     phone = models.CharField(max_length=20, blank=True)
-    phone2 = models.CharField(max_length=20, blank=True)
-    fax = models.CharField(max_length=20, blank=True)
     email = models.EmailField(blank=True)
     website = models.URLField(blank=True)
     
@@ -160,12 +151,31 @@ class BusinessPartner(BaseModel):
         return self.name
     
     def save(self, *args, **kwargs):
+        # Auto-generate code if not provided
+        if not self.code:
+            self.code = self._generate_code()
+        
         # Set boolean flags based on partner_type
         self.is_customer = self.partner_type in ['customer', 'prospect']
         self.is_vendor = self.partner_type == 'vendor'
         self.is_employee = self.partner_type == 'employee'
         self.is_prospect = self.partner_type == 'prospect'
         super().save(*args, **kwargs)
+    
+    def _generate_code(self):
+        """Generate next business partner code (7-digit starting from 1500000)"""
+        # Find the highest numeric code
+        max_num = 1499999  # Start just below 1500000
+        
+        # Get all business partner codes
+        for code in BusinessPartner.objects.all().values_list('code', flat=True):
+            if code and code.isdigit():
+                num = int(code)
+                if num >= 1500000:  # Only consider codes in our range
+                    max_num = max(max_num, num)
+        
+        # Return the next number (minimum 1500000)
+        return str(max_num + 1)
 
 
 class Opportunity(BaseModel):
@@ -348,23 +358,17 @@ class BusinessPartnerLocation(BaseModel):
     # Address fields (based on C_Location)
     address1 = models.CharField(max_length=60, blank=True, verbose_name="Address Line 1")
     address2 = models.CharField(max_length=60, blank=True, verbose_name="Address Line 2") 
-    address3 = models.CharField(max_length=60, blank=True, verbose_name="Address Line 3")
     city = models.CharField(max_length=60, blank=True)
     state = models.CharField(max_length=40, blank=True, verbose_name="State/Province")
     postal_code = models.CharField(max_length=10, blank=True)
-    postal_code_add = models.CharField(max_length=10, blank=True, verbose_name="Additional Postal Code")
     country = models.CharField(max_length=60, default='United States')
     
     # Contact information specific to this location
     phone = models.CharField(max_length=40, blank=True)
-    phone2 = models.CharField(max_length=40, blank=True, verbose_name="Phone 2")
-    fax = models.CharField(max_length=40, blank=True)
     
     # Address type flags
     is_bill_to = models.BooleanField(default=False, help_text="Billing address")
-    is_ship_to = models.BooleanField(default=False, help_text="Shipping address") 
-    is_pay_from = models.BooleanField(default=False, help_text="Payment address")
-    is_remit_to = models.BooleanField(default=False, help_text="Remit-to address")
+    is_ship_to = models.BooleanField(default=False, help_text="Shipping address")
     
     # Additional fields
     comments = models.TextField(blank=True, help_text="Address comments")
@@ -382,8 +386,7 @@ class BusinessPartnerLocation(BaseModel):
         """Return formatted full address"""
         address_lines = [
             self.address1,
-            self.address2,
-            self.address3
+            self.address2
         ]
         address_lines = [line for line in address_lines if line.strip()]
         
@@ -449,13 +452,6 @@ class Contact(BaseModel):
         help_text="Associated business partner"
     )
     
-    business_partner_location = models.ForeignKey(
-        BusinessPartnerLocation,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        help_text="Specific location this contact is associated with"
-    )
     
     # Personal information
     name = models.CharField(max_length=60, help_text="Contact full name")
@@ -466,18 +462,11 @@ class Contact(BaseModel):
     # Contact information
     email = models.EmailField(blank=True, validators=[EmailValidator()])
     phone = models.CharField(max_length=40, blank=True, verbose_name="Primary Phone")
-    phone2 = models.CharField(max_length=40, blank=True, verbose_name="Secondary Phone")
-    fax = models.CharField(max_length=40, blank=True)
     
     # Additional information
     description = models.CharField(max_length=255, blank=True)
     comments = models.TextField(blank=True)
-    birthday = models.DateField(null=True, blank=True)
     
-    # Contact flags
-    is_sales_lead = models.BooleanField(default=False, help_text="Sales lead contact")
-    is_bill_to = models.BooleanField(default=False, help_text="Billing contact")
-    is_ship_to = models.BooleanField(default=False, help_text="Shipping contact")
     
     # Supervisor relationship
     supervisor = models.ForeignKey(
@@ -497,14 +486,17 @@ class Contact(BaseModel):
         return self.name
     
     def save(self, *args, **kwargs):
-        # Auto-populate first_name and last_name from name if they're empty
-        if self.name and not self.first_name and not self.last_name:
-            name_parts = self.name.strip().split()
-            if len(name_parts) >= 2:
-                self.first_name = name_parts[0]
-                self.last_name = ' '.join(name_parts[1:])
-            elif len(name_parts) == 1:
-                self.first_name = name_parts[0]
+        # Auto-populate name from first_name and last_name
+        if self.first_name or self.last_name:
+            name_parts = []
+            if self.first_name:
+                name_parts.append(self.first_name.strip())
+            if self.last_name:
+                name_parts.append(self.last_name.strip())
+            self.name = ' '.join(name_parts)
+        elif not self.name:
+            # If no first/last name and no existing name, set a default
+            self.name = 'Unnamed Contact'
         
         super().save(*args, **kwargs)
     

@@ -1,0 +1,81 @@
+{% load i18n admin_urls static admin_modify %}
+
+<div class="inline-group" id="{{ inline_admin_formset.formset.prefix }}-group">
+    <div class="tabular inline-related">
+        <fieldset class="module">
+            <h2>{{ inline_admin_formset.opts.verbose_name_plural|capfirst }}</h2>
+            
+            {# Add Location Button #}
+            {% if original.pk %}
+                <div class="add-location-section" style="margin-bottom: 15px;">
+                    <a href="{% url 'admin:core_businesspartnerlocation_add' %}?business_partner={{ original.pk }}" 
+                       class="addlink" 
+                       target="_blank">
+                        Add {{ inline_admin_formset.opts.verbose_name }}
+                    </a>
+                </div>
+            {% endif %}
+            
+            {% if inline_admin_formset.formset.forms %}
+                <table class="location-inline-table">
+                    <thead>
+                        <tr>
+                            <th class="location-name-col">{% trans "Name" %}</th>
+                            <th class="location-address-col">{% trans "Address" %}</th>
+                            <th class="location-city-col">{% trans "City, State, ZIP" %}</th>
+                            <th class="location-types-col">{% trans "Types" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for inline_admin_form in inline_admin_formset %}
+                            {% if inline_admin_form.original %}
+                                <tr class="form-row {% cycle 'row1' 'row2' %} readonly-location-row">
+                                    <td class="field-location_link location-name-col">
+                                        <a href="{% url 'admin:core_businesspartnerlocation_change' inline_admin_form.original.pk %}" target="_blank">
+                                            <strong>{{ inline_admin_form.original.name }}</strong>
+                                        </a>
+                                    </td>
+                                    <td class="field-address_display location-address-col">
+                                        {{ inline_admin_form.original.address1|default:"-" }}
+                                    </td>
+                                    <td class="field-city_state_display location-city-col">
+                                        {% with city=inline_admin_form.original.city state=inline_admin_form.original.state zip=inline_admin_form.original.postal_code %}
+                                            {% if city or state or zip %}
+                                                {{ city }}{% if city and state %}, {% endif %}{{ state }}{% if zip %} {{ zip }}{% endif %}
+                                            {% else %}
+                                                -
+                                            {% endif %}
+                                        {% endwith %}
+                                    </td>
+                                    <td class="field-type_flags_display location-types-col">
+                                        {% if inline_admin_form.original.is_bill_to %}
+                                            <span class="location-flag billing">Bill To</span>
+                                        {% endif %}
+                                        {% if inline_admin_form.original.is_ship_to %}
+                                            <span class="location-flag shipping">Ship To</span>
+                                        {% endif %}
+                                        {% if not inline_admin_form.original.is_bill_to and not inline_admin_form.original.is_ship_to %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="no-locations-message" style="padding: 20px; text-align: center; color: #666; font-style: italic; background-color: #f9f9f9; border: 1px dashed #ddd; margin: 10px 0; border-radius: 4px;">
+                    No locations added yet.
+                </div>
+            {% endif %}
+            
+            {# Hidden management form fields #}
+            {{ inline_admin_formset.formset.management_form }}
+            {% for inline_admin_form in inline_admin_formset %}
+                {% for hidden in inline_admin_form.form.hidden_fields %}
+                    {{ hidden }}
+                {% endfor %}
+            {% endfor %}
+        </fieldset>
+    </div>
+</div>

@@ -12,6 +12,30 @@ from core.models import BaseModel, Organization, BusinessPartner, NumberSequence
 from inventory.models import Product, Warehouse, PriceList
 
 
+class SalesOrderLineManager(models.Manager):
+    """Custom manager for SalesOrderLine to ensure price_actual is always set"""
+    
+    def create(self, **kwargs):
+        from djmoney.money import Money
+        
+        print(f"🔍 SalesOrderLineManager.create called with kwargs: {kwargs}")
+        
+        # Ensure price_actual is set
+        if 'price_actual' not in kwargs and 'price_entered' in kwargs:
+            kwargs['price_actual'] = kwargs['price_entered']
+            print(f"🔍 Manager auto-set price_actual from price_entered: {kwargs['price_actual']}")
+        elif 'price_actual' not in kwargs:
+            kwargs['price_actual'] = Money(0, 'USD')
+            print(f"🔍 Manager auto-set price_actual to 0")
+            
+        # Ensure price_list is set
+        if 'price_list' not in kwargs:
+            kwargs['price_list'] = kwargs.get('price_entered', Money(0, 'USD'))
+            print(f"🔍 Manager auto-set price_list: {kwargs['price_list']}")
+            
+        return super().create(**kwargs)
+
+
 class SalesOrder(BaseModel):
     """
     Sales Order header.
@@ -110,8 +134,54 @@ class SalesOrder(BaseModel):
     class Meta:
         ordering = ['-date_ordered', 'document_no']
         
+    def calculate_totals(self):
+        """Calculate and update order totals from line items"""
+        from djmoney.money import Money
+        
+        total_lines_amount = 0
+        for line in self.lines.all():
+            if line.line_net_amount:
+                total_lines_amount += line.line_net_amount.amount
+        
+        self.total_lines = Money(total_lines_amount, 'USD')
+        self.grand_total = self.total_lines  # For now, same as total_lines (no tax)
+        self.save()
+        
+        return self.grand_total
+
     def __str__(self):
-        return f"{self.document_no} - {self.business_partner.name}"
+        # Add SO- prefix for display
+        doc_display = f"SO-{self.document_no}" if self.document_no.isdigit() else self.document_no
+        return f"{doc_display} - {self.business_partner.name}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-generate document number if not provided
+        if not self.document_no:
+            self.document_no = self._generate_document_number()
+        super().save(*args, **kwargs)
+    
+    def _generate_document_number(self):
+        """Generate next sales order number (numeric only)"""
+        import re
+        
+        # Find the highest numeric document number
+        max_num = 0
+        
+        # Get all document numbers
+        for doc_no in SalesOrder.objects.all().values_list('document_no', flat=True):
+            if doc_no:
+                # Check if it's purely numeric
+                if doc_no.isdigit():
+                    max_num = max(max_num, int(doc_no))
+                else:
+                    # Extract any numbers from the string (for legacy data)
+                    match = re.search(r'(\d+)', doc_no)
+                    if match:
+                        num = int(match.group(1))
+                        max_num = max(max_num, num)
+        
+        # Return the next number
+        return str(max_num + 1)
     
     @property
     def total_quantity_ordered(self):
@@ -167,6 +237,10 @@ class SalesOrder(BaseModel):
     
     def get_workflow_instance(self):
         """Get or create workflow instance for this sales order"""
+        # Return None if object hasn't been saved yet
+        if self.pk is None:
+            return None
+            
         from django.contrib.contenttypes.models import ContentType
         from core.models import DocumentWorkflow, WorkflowDefinition, WorkflowState
         
@@ -269,6 +343,9 @@ class SalesOrderLine(BaseModel):
     Based on iDempiere's C_OrderLine.
     """
     order = models.ForeignKey(SalesOrder, on_delete=models.CASCADE, related_name='lines')
+    
+    # Custom manager
+    objects = SalesOrderLineManager()
     line_no = models.IntegerField()
     description = models.TextField(blank=True)
     
@@ -286,7 +363,7 @@ class SalesOrderLine(BaseModel):
     
     # Pricing
     price_entered = MoneyField(max_digits=15, decimal_places=2, default_currency='USD')
-    price_actual = MoneyField(max_digits=15, decimal_places=2, default_currency='USD')
+    price_actual = MoneyField(max_digits=15, decimal_places=2, default_currency='USD', default=0)
     price_list = MoneyField(max_digits=15, decimal_places=2, default_currency='USD', default=0)
     discount = models.DecimalField(max_digits=7, decimal_places=4, default=0, help_text="Percentage discount")
     
@@ -304,6 +381,40 @@ class SalesOrderLine(BaseModel):
     class Meta:
         unique_together = ['order', 'line_no']
         ordering = ['order', 'line_no']
+        
+    def save(self, *args, **kwargs):
+        """Override save to ensure price_actual is always set"""
+        from djmoney.money import Money
+        
+        print(f"🔍 SalesOrderLine.save() called for line_no={getattr(self, 'line_no', 'NEW')}")
+        print(f"🔍 Before save - price_entered: {self.price_entered}, price_actual: {self.price_actual}")
+        
+        # If price_actual is not set but price_entered is, copy it
+        if not self.price_actual and self.price_entered:
+            self.price_actual = self.price_entered
+            print(f"🔍 Copied price_entered to price_actual: {self.price_actual}")
+        # If neither is set, set both to 0
+        elif not self.price_actual and not self.price_entered:
+            self.price_actual = Money(0, 'USD')
+            self.price_entered = Money(0, 'USD')
+            print(f"🔍 Set both prices to 0")
+        # If only price_actual is missing, set it to 0
+        elif not self.price_actual:
+            self.price_actual = Money(0, 'USD')
+            print(f"🔍 Set price_actual to 0")
+            
+        # Ensure price_list is set
+        if not self.price_list:
+            self.price_list = self.price_entered if self.price_entered else Money(0, 'USD')
+            
+        print(f"🔍 After save fixes - price_entered: {self.price_entered}, price_actual: {self.price_actual}")
+        super().save(*args, **kwargs)
+        print(f"🔍 SalesOrderLine.save() completed successfully")
+        
+        # Recalculate order totals after saving the line
+        if self.order:
+            self.order.calculate_totals()
+            print(f"🔍 Recalculated order totals: {self.order.grand_total}")
         
     def __str__(self):
         product_name = self.product.name if self.product else self.charge.name if self.charge else 'N/A'
@@ -394,10 +505,45 @@ class Invoice(BaseModel):
         ordering = ['-date_invoiced', 'document_no']
         
     def __str__(self):
-        return f"{self.document_no} - {self.business_partner.name}"
+        # Add INV- prefix for display
+        doc_display = f"INV-{self.document_no}" if self.document_no.isdigit() else self.document_no
+        return f"{doc_display} - {self.business_partner.name}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-generate document number if not provided
+        if not self.document_no:
+            self.document_no = self._generate_document_number()
+        super().save(*args, **kwargs)
+    
+    def _generate_document_number(self):
+        """Generate next invoice number (numeric only)"""
+        import re
+        
+        # Find the highest numeric document number
+        max_num = 0
+        
+        # Get all document numbers
+        for doc_no in Invoice.objects.all().values_list('document_no', flat=True):
+            if doc_no:
+                # Check if it's purely numeric
+                if doc_no.isdigit():
+                    max_num = max(max_num, int(doc_no))
+                else:
+                    # Extract any numbers from the string (for legacy data)
+                    match = re.search(r'(\d+)', doc_no)
+                    if match:
+                        num = int(match.group(1))
+                        max_num = max(max_num, num)
+        
+        # Return the next number
+        return str(max_num + 1)
     
     def get_workflow_instance(self):
         """Get or create workflow instance for this invoice"""
+        # Return None if object hasn't been saved yet
+        if self.pk is None:
+            return None
+            
         from django.contrib.contenttypes.models import ContentType
         from core.models import DocumentWorkflow, WorkflowDefinition, WorkflowState
         
@@ -602,10 +748,45 @@ class Shipment(BaseModel):
         ordering = ['-movement_date', 'document_no']
         
     def __str__(self):
-        return f"{self.document_no} - {self.business_partner.name}"
+        # Add SH- prefix for display
+        doc_display = f"SH-{self.document_no}" if self.document_no.isdigit() else self.document_no
+        return f"{doc_display} - {self.business_partner.name}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-generate document number if not provided
+        if not self.document_no:
+            self.document_no = self._generate_document_number()
+        super().save(*args, **kwargs)
+    
+    def _generate_document_number(self):
+        """Generate next shipment number (numeric only)"""
+        import re
+        
+        # Find the highest numeric document number
+        max_num = 0
+        
+        # Get all document numbers
+        for doc_no in Shipment.objects.all().values_list('document_no', flat=True):
+            if doc_no:
+                # Check if it's purely numeric
+                if doc_no.isdigit():
+                    max_num = max(max_num, int(doc_no))
+                else:
+                    # Extract any numbers from the string (for legacy data)
+                    match = re.search(r'(\d+)', doc_no)
+                    if match:
+                        num = int(match.group(1))
+                        max_num = max(max_num, num)
+        
+        # Return the next number - start from 1 if no shipments exist
+        return str(max_num + 1) if max_num > 0 else "1"
     
     def get_workflow_instance(self):
         """Get or create workflow instance for this shipment"""
+        # Return None if object hasn't been saved yet
+        if self.pk is None:
+            return None
+            
         from django.contrib.contenttypes.models import ContentType
         from core.models import DocumentWorkflow, WorkflowDefinition, WorkflowState
         

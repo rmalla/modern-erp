@@ -14,10 +14,7 @@ class Migration(migrations.Migration):
             reverse_sql="DROP INDEX IF EXISTS idx_bp_type_active;"
         ),
         
-        migrations.RunSQL(
-            "CREATE INDEX IF NOT EXISTS idx_bp_search_key ON core_businesspartner (search_key);",
-            reverse_sql="DROP INDEX IF EXISTS idx_bp_search_key;"
-        ),
+# Removed search_key index as field was removed in migration 0010
         
         migrations.RunSQL(
             "CREATE INDEX IF NOT EXISTS idx_bp_name_search ON core_businesspartner USING gin(to_tsvector('english', name));",

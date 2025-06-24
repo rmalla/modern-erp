@@ -160,7 +160,7 @@ def cache_business_partner_data(business_partner_id, timeout=TIMEOUT_LONG):
                 'business_partner': {
                     'id': str(bp.id),
                     'name': bp.name,
-                    'search_key': bp.search_key,
+                    'code': bp.code,
                     'partner_type': bp.partner_type,
                 },
                 'contacts': contacts,

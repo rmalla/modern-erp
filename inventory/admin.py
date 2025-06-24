@@ -39,6 +39,7 @@ class ProductAdmin(admin.ModelAdmin):
     list_display = ('manufacturer_part_number', 'name', 'manufacturer', 'product_type', 'list_price', 'is_active')
     list_filter = ('manufacturer', 'product_type', 'is_active')
     search_fields = ('manufacturer_part_number', 'name', 'short_description', 'description')
+    autocomplete_fields = ['manufacturer']  # Enable autocomplete for manufacturer selection
     fieldsets = (
         ('Product ID', {
             'fields': (

@@ -76,52 +76,69 @@ class DocumentContactForm(forms.ModelForm):
 
 class SalesOrderLineInline(admin.TabularInline):
     model = models.SalesOrderLine
-    extra = 0
-    fields = ('line_no', 'product', 'quantity_ordered', 'price_entered')
-    readonly_fields = ('line_no',)
-    
-    def get_readonly_fields(self, request, obj=None):
-        """Make line fields readonly based on parent order workflow state"""
-        readonly_fields = list(super().get_readonly_fields(request, obj))
-        
-        if obj and obj.pk:
-            workflow = obj.get_workflow_instance()
-            if workflow:
-                current_state = workflow.current_state.name
-                
-                # Lock line items for submitted orders
-                locked_states = ['pending_approval', 'approved', 'in_progress', 'complete', 'closed']
-                
-                if current_state in locked_states:
-                    # Make all line fields readonly
-                    line_fields = ['product', 'quantity_ordered', 'price_entered']
-                    for field in line_fields:
-                        if field not in readonly_fields:
-                            readonly_fields.append(field)
-        
-        return readonly_fields
+    extra = 0  # No empty fields
+    fields = ('line_link', 'product_display', 'quantity_display', 'price_display', 'line_total_display')
+    readonly_fields = ('line_link', 'product_display', 'quantity_display', 'price_display', 'line_total_display')
+    can_delete = True
+    show_change_link = False  # We'll use our custom link
+    verbose_name = "Order Line"
+    verbose_name_plural = "Sales Order Lines"
+    template = 'admin/sales/salesorderline_inline.html'  # Custom template
     
     def has_add_permission(self, request, obj=None):
-        """Prevent adding new lines for locked orders"""
-        if obj and obj.pk:
-            workflow = obj.get_workflow_instance()
-            if workflow:
-                current_state = workflow.current_state.name
-                locked_states = ['pending_approval', 'approved', 'in_progress', 'complete', 'closed']
-                if current_state in locked_states:
-                    return False
-        return super().has_add_permission(request, obj)
+        """Disable adding through inline - use the add button instead"""
+        return False
     
-    def has_delete_permission(self, request, obj=None):
-        """Prevent deleting lines for locked orders"""
-        if obj and obj.pk:
-            workflow = obj.get_workflow_instance()
-            if workflow:
-                current_state = workflow.current_state.name
-                locked_states = ['pending_approval', 'approved', 'in_progress', 'complete', 'closed']
-                if current_state in locked_states:
-                    return False
-        return super().has_delete_permission(request, obj)
+    def has_change_permission(self, request, obj=None):
+        """Disable changing through inline - use the edit link instead"""
+        return False
+    
+    def line_link(self, obj):
+        """Display line number as link to edit page"""
+        if obj.pk:
+            from django.urls import reverse
+            from django.utils.html import format_html
+            url = reverse('admin:sales_salesorderline_change', args=[obj.pk])
+            return format_html('<a href="{}" target="_blank"><strong>Line {}</strong></a>', url, obj.line_no)
+        return f'Line {obj.line_no}'
+    line_link.short_description = 'Line #'
+    
+    def product_display(self, obj):
+        """Display product with name and part number"""
+        if obj.product:
+            return f"{obj.product.name}\n{obj.product.manufacturer_part_number or 'N/A'}"
+        elif obj.charge:
+            return f"⚡ {obj.charge.name}"
+        return obj.description or '-'
+    product_display.short_description = 'Product / Charge'
+    
+    def quantity_display(self, obj):
+        """Display quantity ordered"""
+        return f"{obj.quantity_ordered}"
+    quantity_display.short_description = 'Qty'
+    
+    def price_display(self, obj):
+        """Display unit price"""
+        if obj.price_entered:
+            return f"${obj.price_entered.amount:,.2f}"
+        return '-'
+    price_display.short_description = 'Unit Price'
+    
+    def line_total_display(self, obj):
+        """Display line total"""
+        if obj.line_net_amount:
+            return f"${obj.line_net_amount.amount:,.2f}"
+        return '-'
+    line_total_display.short_description = 'Line Total'
+    
+    def get_readonly_fields(self, request, obj=None):
+        """All fields are readonly - editing happens through popup"""
+        return self.readonly_fields
+    
+    class Media:
+        css = {
+            'all': ('admin/css/custom_inline.css',)
+        }
 
 
 class SalesOrderForm(DocumentContactForm):
@@ -164,7 +181,7 @@ class ShipmentForm(DocumentContactForm):
 @admin.register(models.SalesOrder)
 class SalesOrderAdmin(admin.ModelAdmin):
     form = SalesOrderForm
-    list_display = ('document_no', 'opportunity', 'business_partner', 'date_ordered', 'workflow_state_display', 'grand_total', 'is_delivered', 'is_invoiced', 'lock_status', 'print_order')
+    list_display = ('document_no_display', 'opportunity', 'business_partner', 'date_ordered', 'workflow_state_display', 'grand_total', 'is_delivered', 'is_invoiced', 'lock_status', 'print_order')
     list_filter = ('doc_status', 'opportunity', 'organization', 'warehouse', 'is_delivered', 'is_invoiced', 'is_drop_ship')
     readonly_fields = ('business_partner_address_display', 'bill_to_address_display', 'ship_to_address_display', 'transaction_id', 'transaction_actions')
     search_fields = ('document_no', 'opportunity__opportunity_number', 'business_partner__name', 'description')
@@ -172,6 +189,14 @@ class SalesOrderAdmin(admin.ModelAdmin):
     inlines = [SalesOrderLineInline]
     actions = ['create_combined_invoice', 'reactivate_sales_orders']
     autocomplete_fields = ['opportunity', 'business_partner']
+    
+    def document_no_display(self, obj):
+        """Display document number with SO- prefix"""
+        if obj.document_no and obj.document_no.isdigit():
+            return f"SO-{obj.document_no}"
+        return obj.document_no
+    document_no_display.short_description = 'Document No'
+    document_no_display.admin_order_field = 'document_no'
     
     def print_order(self, obj):
         """Add print button in list view"""
@@ -181,6 +206,13 @@ class SalesOrderAdmin(admin.ModelAdmin):
     print_order.allow_tags = True
     
     fieldsets = (
+        ('Document Number', {
+            'fields': (
+                'document_no',
+            ),
+            'classes': ('wide',),
+            'description': 'Document number is auto-generated when the sales order is saved'
+        }),
         ('Order Header', {
             'fields': (
                 ('business_partner', 'opportunity'),
@@ -209,14 +241,15 @@ class SalesOrderAdmin(admin.ModelAdmin):
         }),
         ('Document Information', {
             'fields': (
-                ('organization', 'document_no'),
-                ('description', 'doc_status'),
+                ('organization', 'doc_status'),
+                ('description',),
             ),
             'classes': ('wide',)
         }),
         ('Pricing', {
             'fields': (
-                ('currency', 'warehouse'),
+                ('price_list', 'currency'),
+                ('warehouse',),
                 ('total_lines', 'grand_total'),
             ),
             'classes': ('wide',)
@@ -251,7 +284,7 @@ class SalesOrderAdmin(admin.ModelAdmin):
             'description': 'Document workflow and approval management'
         }),
     )
-    readonly_fields = ('total_lines', 'grand_total', 'business_partner_address_display', 'bill_to_address_display', 'ship_to_address_display', 'transaction_id', 'transaction_actions', 'payment_url_display', 'invoice_actions', 'current_workflow_state', 'workflow_actions', 'approval_status_display')
+    readonly_fields = ('document_no', 'total_lines', 'grand_total', 'business_partner_address_display', 'bill_to_address_display', 'ship_to_address_display', 'transaction_id', 'transaction_actions', 'payment_url_display', 'invoice_actions', 'current_workflow_state', 'workflow_actions', 'approval_status_display')
     
     def get_readonly_fields(self, request, obj=None):
         """
@@ -1064,6 +1097,90 @@ class SalesOrderLineAdmin(admin.ModelAdmin):
     list_display = ('order', 'line_no', 'product', 'charge', 'quantity_ordered', 'price_actual', 'line_net_amount')
     list_filter = ('order__organization', 'product__manufacturer')
     search_fields = ('order__document_no', 'product__manufacturer_part_number', 'product__name', 'description')
+    raw_id_fields = ('order',)  # Use search widget for order
+    autocomplete_fields = ['product']  # Enable autocomplete for product selection
+    
+    fieldsets = (
+        ('Order Information', {
+            'fields': ('order', 'line_no')
+        }),
+        ('Product/Service', {
+            'fields': ('product', 'charge', 'description'),
+            'description': 'Select either a Product OR a Charge (service/fee), not both. Use "Add Product" link below to create new products.'
+        }),
+        ('Quantities', {
+            'fields': ('quantity_ordered', 'quantity_delivered', 'quantity_invoiced')
+        }),
+        ('Pricing', {
+            'fields': ('price_entered', 'price_actual', 'discount', 'line_net_amount')
+        }),
+        ('Dates', {
+            'fields': ('date_promised', 'date_delivered')
+        }),
+        ('Tax Information', {
+            'fields': ('tax', 'tax_amount'),
+            'classes': ('collapse',)
+        }),
+    )
+    
+    readonly_fields = ('line_no', 'price_actual', 'line_net_amount', 'quantity_delivered', 'quantity_invoiced')
+    
+    def get_changeform_initial_data(self, request):
+        """Pre-fill order when adding from sales order page"""
+        initial = super().get_changeform_initial_data(request)
+        
+        # Check if order parameter is in the URL
+        order_id = request.GET.get('order')
+        if order_id:
+            try:
+                order = models.SalesOrder.objects.get(pk=order_id)
+                initial['order'] = order
+                # Auto-generate next line number
+                last_line = models.SalesOrderLine.objects.filter(order=order).order_by('-line_no').first()
+                initial['line_no'] = (last_line.line_no + 10) if last_line else 10
+            except models.SalesOrder.DoesNotExist:
+                pass
+        
+        return initial
+    
+    def save_model(self, request, obj, form, change):
+        """Auto-populate created_by and updated_by fields"""
+        if not change:
+            obj.created_by = request.user
+        obj.updated_by = request.user
+        super().save_model(request, obj, form, change)
+    
+    def get_readonly_fields(self, request, obj=None):
+        """Make fields readonly based on parent order workflow state"""
+        readonly_fields = list(super().get_readonly_fields(request, obj))
+        
+        if obj and obj.pk and obj.order:
+            workflow = obj.order.get_workflow_instance()
+            if workflow:
+                current_state = workflow.current_state.name
+                
+                # Lock line items for submitted orders
+                locked_states = ['pending_approval', 'approved', 'in_progress', 'complete', 'closed']
+                
+                if current_state in locked_states:
+                    # Make most fields readonly for locked orders
+                    locked_fields = ['product', 'charge', 'description', 'quantity_ordered', 'price_entered', 'discount']
+                    for field in locked_fields:
+                        if field not in readonly_fields:
+                            readonly_fields.append(field)
+        
+        return readonly_fields
+    
+    def has_delete_permission(self, request, obj=None):
+        """Prevent deleting lines for locked orders"""
+        if obj and obj.order:
+            workflow = obj.order.get_workflow_instance()
+            if workflow:
+                current_state = workflow.current_state.name
+                locked_states = ['pending_approval', 'approved', 'in_progress', 'complete', 'closed']
+                if current_state in locked_states:
+                    return False
+        return super().has_delete_permission(request, obj)
 
 
 class InvoiceLineInline(admin.TabularInline):
@@ -1097,7 +1214,7 @@ class InvoiceLineInline(admin.TabularInline):
 @admin.register(models.Invoice)
 class InvoiceAdmin(admin.ModelAdmin):
     form = InvoiceForm
-    list_display = ('document_no', 'opportunity', 'business_partner', 'date_invoiced', 'doc_status', 'invoice_type', 'grand_total', 'is_paid', 'print_invoice')
+    list_display = ('document_no_display', 'opportunity', 'business_partner', 'date_invoiced', 'doc_status', 'invoice_type', 'grand_total', 'is_paid', 'print_invoice')
     list_filter = ('doc_status', 'opportunity', 'invoice_type', 'organization', 'is_paid', 'is_posted')
     search_fields = ('document_no', 'opportunity__opportunity_number', 'business_partner__name', 'description')
     date_hierarchy = 'date_invoiced'
@@ -1105,8 +1222,15 @@ class InvoiceAdmin(admin.ModelAdmin):
     autocomplete_fields = ['opportunity', 'business_partner', 'sales_order']
     
     fieldsets = (
+        ('Document Number', {
+            'fields': (
+                'document_no',
+            ),
+            'classes': ('wide',),
+            'description': 'Document number is auto-generated when the invoice is saved'
+        }),
         ('Document Information', {
-            'fields': ('organization', 'document_no', 'description', 'invoice_type')
+            'fields': ('organization', 'description', 'invoice_type')
         }),
         ('Dates', {
             'fields': ('date_invoiced', 'date_accounting', 'due_date')
@@ -1147,6 +1271,14 @@ class InvoiceAdmin(admin.ModelAdmin):
         }),
     )
     readonly_fields = ('document_no', 'total_lines', 'tax_amount', 'grand_total', 'paid_amount', 'open_amount', 'business_partner_address_display', 'bill_to_address_display', 'current_workflow_state', 'workflow_actions')
+    
+    def document_no_display(self, obj):
+        """Display document number with INV- prefix"""
+        if obj.document_no and obj.document_no.isdigit():
+            return f"INV-{obj.document_no}"
+        return obj.document_no
+    document_no_display.short_description = 'Document No'
+    document_no_display.admin_order_field = 'document_no'
     
     def business_partner_address_display(self, obj):
         """Display business partner location with customer name"""
@@ -1483,7 +1615,7 @@ class ShipmentLineInline(admin.TabularInline):
 @admin.register(models.Shipment)
 class ShipmentAdmin(admin.ModelAdmin):
     form = ShipmentForm
-    list_display = ('document_no', 'opportunity', 'business_partner', 'movement_date', 'doc_status', 'movement_type', 'warehouse', 'is_in_transit')
+    list_display = ('document_no_display', 'opportunity', 'business_partner', 'movement_date', 'doc_status', 'movement_type', 'warehouse', 'is_in_transit')
     list_filter = ('doc_status', 'opportunity', 'movement_type', 'organization', 'warehouse', 'is_in_transit')
     search_fields = ('document_no', 'opportunity__opportunity_number', 'business_partner__name', 'description', 'tracking_no')
     date_hierarchy = 'movement_date'
@@ -1491,8 +1623,15 @@ class ShipmentAdmin(admin.ModelAdmin):
     autocomplete_fields = ['opportunity', 'business_partner']
     
     fieldsets = (
+        ('Document Number', {
+            'fields': (
+                'document_no',
+            ),
+            'classes': ('wide',),
+            'description': 'Document number is auto-generated when the shipment is saved'
+        }),
         ('Document Information', {
-            'fields': ('organization', 'document_no', 'description', 'doc_status', 'movement_type')
+            'fields': ('organization', 'description', 'doc_status', 'movement_type')
         }),
         ('Dates', {
             'fields': ('movement_date', 'date_received')
@@ -1528,7 +1667,15 @@ class ShipmentAdmin(admin.ModelAdmin):
             'description': 'Shipment workflow and status management'
         }),
     )
-    readonly_fields = ('business_partner_address_display', 'current_workflow_state', 'workflow_actions')
+    readonly_fields = ('document_no', 'business_partner_address_display', 'current_workflow_state', 'workflow_actions')
+    
+    def document_no_display(self, obj):
+        """Display document number with SH- prefix"""
+        if obj.document_no and obj.document_no.isdigit():
+            return f"SH-{obj.document_no}"
+        return obj.document_no
+    document_no_display.short_description = 'Document No'
+    document_no_display.admin_order_field = 'document_no'
     
     def business_partner_address_display(self, obj):
         """Display ship-to address with customer name"""

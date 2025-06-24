@@ -50,39 +50,142 @@ class DepartmentAdmin(admin.ModelAdmin):
 
 class ContactInline(admin.TabularInline):
     model = models.Contact
-    extra = 1
-    fields = ('name', 'title', 'email', 'phone', 'is_sales_lead', 'is_bill_to', 'is_ship_to')
-    readonly_fields = ()
+    extra = 0  # No empty fields
+    fields = ('contact_link', 'title_display', 'email_display', 'phone_display')
+    readonly_fields = ('contact_link', 'title_display', 'email_display', 'phone_display')
     can_delete = True
-    show_change_link = True
+    show_change_link = False  # We'll use our custom link
     verbose_name = "Contact"
     verbose_name_plural = "Contacts"
+    template = 'admin/core/contact_inline.html'  # Custom template
+    
+    def has_add_permission(self, request, obj=None):
+        """Disable adding through inline - use the add button instead"""
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        """Disable changing through inline - use the edit link instead"""
+        return False
+    
+    def contact_link(self, obj):
+        """Display contact name as link to edit page"""
+        if obj.pk:
+            from django.urls import reverse
+            from django.utils.html import format_html
+            url = reverse('admin:core_contact_change', args=[obj.pk])
+            return format_html('<a href="{}" target="_blank"><strong>{}</strong></a>', url, obj.name)
+        return obj.name
+    contact_link.short_description = 'Name'
+    
+    def title_display(self, obj):
+        """Display title"""
+        return obj.title or '-'
+    title_display.short_description = 'Title'
+    
+    def email_display(self, obj):
+        """Display email"""
+        return obj.email or '-'
+    email_display.short_description = 'Email'
+    
+    def phone_display(self, obj):
+        """Display phone"""
+        return obj.phone or '-'
+    phone_display.short_description = 'Phone'
+    
+    def flags_display(self, obj):
+        """Display contact flags as badges"""
+        from django.utils.html import format_html
+        flags = []
+        if obj.is_sales_lead:
+            flags.append('<span class="contact-flag sales">Sales</span>')
+        if obj.is_bill_to:
+            flags.append('<span class="contact-flag billing">Bill To</span>')
+        if obj.is_ship_to:
+            flags.append('<span class="contact-flag shipping">Ship To</span>')
+        return format_html(' '.join(flags)) if flags else '-'
+    flags_display.short_description = 'Roles'
+    
+    class Media:
+        css = {
+            'all': ('admin/css/custom_inline.css',)
+        }
 
 
 class BusinessPartnerLocationInline(admin.TabularInline):
     model = models.BusinessPartnerLocation
-    extra = 1
-    fields = ('name', 'address1', 'city', 'state', 'postal_code', 'is_bill_to', 'is_ship_to')
-    readonly_fields = ()
+    extra = 0  # No empty fields
+    fields = ('location_link', 'address_display', 'city_state_display', 'type_flags_display')
+    readonly_fields = ('location_link', 'address_display', 'city_state_display', 'type_flags_display')
     can_delete = True
-    show_change_link = True
+    show_change_link = False  # We'll use our custom link
     verbose_name = "Location"
     verbose_name_plural = "Business Partner Locations"
+    template = 'admin/core/location_inline.html'  # Custom template
+    
+    def has_add_permission(self, request, obj=None):
+        """Disable adding through inline - use the add button instead"""
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        """Disable changing through inline - use the edit link instead"""
+        return False
+    
+    def location_link(self, obj):
+        """Display location name as link to edit page"""
+        if obj.pk:
+            from django.urls import reverse
+            from django.utils.html import format_html
+            url = reverse('admin:core_businesspartnerlocation_change', args=[obj.pk])
+            return format_html('<a href="{}" target="_blank"><strong>{}</strong></a>', url, obj.name)
+        return obj.name
+    location_link.short_description = 'Name'
+    
+    def address_display(self, obj):
+        """Display primary address"""
+        return obj.address1 or '-'
+    address_display.short_description = 'Address'
+    
+    def city_state_display(self, obj):
+        """Display city, state, postal code"""
+        parts = []
+        if obj.city:
+            parts.append(obj.city)
+        if obj.state:
+            parts.append(obj.state)
+        if obj.postal_code:
+            parts.append(obj.postal_code)
+        return ', '.join(parts) if parts else '-'
+    city_state_display.short_description = 'City, State, ZIP'
+    
+    def type_flags_display(self, obj):
+        """Display location type flags as badges"""
+        from django.utils.html import format_html
+        flags = []
+        if obj.is_bill_to:
+            flags.append('<span class="location-flag billing">Bill To</span>')
+        if obj.is_ship_to:
+            flags.append('<span class="location-flag shipping">Ship To</span>')
+        return format_html(' '.join(flags)) if flags else '-'
+    type_flags_display.short_description = 'Types'
+    
+    class Media:
+        css = {
+            'all': ('admin/css/custom_inline.css',)
+        }
 
 
 @admin.register(models.BusinessPartner)
 class BusinessPartnerAdmin(admin.ModelAdmin):
     list_display = ('code', 'name', 'partner_type', 'email', 'phone', 'contact_count', 'location_count', 'is_active')
     list_filter = ('partner_type', 'is_customer', 'is_vendor', 'is_tax_exempt', 'is_active')
-    search_fields = ('code', 'name', 'search_key', 'email', 'tax_id')
+    search_fields = ('code', 'name', 'email', 'tax_id')
     inlines = [ContactInline, BusinessPartnerLocationInline]
     fieldsets = (
         ('Basic Information', {
-            'fields': ('code', 'name', 'name2', 'search_key', 'partner_type')
+            'fields': ('code', 'name', 'name2', 'partner_type')
         }),
         ('Contact Information', {
-            'fields': ('address_line1', 'address_line2', 'city', 'state', 'postal_code', 'country',
-                      'phone', 'phone2', 'fax', 'email', 'website')
+            'fields': ('country', 'phone', 'email', 'website')
         }),
         ('Financial', {
             'fields': ('credit_limit', 'payment_terms', 'tax_id', 'is_tax_exempt', 'is_1099_vendor')
@@ -91,7 +194,7 @@ class BusinessPartnerAdmin(admin.ModelAdmin):
             'fields': ('is_customer', 'is_vendor', 'is_employee', 'is_prospect')
         }),
     )
-    readonly_fields = ('is_customer', 'is_vendor', 'is_employee', 'is_prospect')
+    readonly_fields = ('code', 'is_customer', 'is_vendor', 'is_employee', 'is_prospect')
     
     def contact_count(self, obj):
         """Display number of contacts for this business partner"""
@@ -183,48 +286,64 @@ class IncotermsAdmin(admin.ModelAdmin):
 @admin.register(models.Contact)
 class ContactAdmin(admin.ModelAdmin):
     list_display = ('name', 'business_partner', 'email', 'phone', 'title', 'is_active')
-    list_filter = ('business_partner', 'is_sales_lead', 'is_bill_to', 'is_ship_to', 'is_active')
+    list_filter = ('business_partner', 'is_active')
     search_fields = ('name', 'first_name', 'last_name', 'email', 'phone', 'business_partner__name')
+    raw_id_fields = ('business_partner', 'supervisor')  # Use search widgets instead of dropdowns
+    list_select_related = ('business_partner',)  # Optimize list view queries
     fieldsets = (
         ('Basic Information', {
-            'fields': ('name', 'first_name', 'last_name', 'title')
+            'fields': ('first_name', 'last_name', 'title')
         }),
         ('Business Partner', {
-            'fields': ('business_partner', 'business_partner_location', 'supervisor')
+            'fields': ('business_partner', 'supervisor')
         }),
         ('Contact Information', {
-            'fields': ('email', 'phone', 'phone2', 'fax')
+            'fields': ('email', 'phone')
         }),
         ('Additional Information', {
-            'fields': ('description', 'comments', 'birthday')
-        }),
-        ('Flags', {
-            'fields': ('is_sales_lead', 'is_bill_to', 'is_ship_to')
+            'fields': ('description', 'comments')
         }),
     )
     
     def get_queryset(self, request):
         """Optimize queries by selecting related objects"""
-        return super().get_queryset(request).select_related('business_partner', 'business_partner_location', 'supervisor')
+        return super().get_queryset(request).select_related('business_partner', 'supervisor')
+    
+    def get_changeform_initial_data(self, request):
+        """Pre-fill business_partner when adding from business partner page"""
+        initial = super().get_changeform_initial_data(request)
+        
+        # Check if business_partner parameter is in the URL
+        business_partner_id = request.GET.get('business_partner')
+        if business_partner_id:
+            try:
+                business_partner = models.BusinessPartner.objects.get(pk=business_partner_id)
+                initial['business_partner'] = business_partner
+            except models.BusinessPartner.DoesNotExist:
+                pass
+        
+        return initial
 
 
 @admin.register(models.BusinessPartnerLocation)
 class BusinessPartnerLocationAdmin(admin.ModelAdmin):
     list_display = ('name', 'business_partner', 'city', 'state', 'country', 'is_bill_to', 'is_ship_to')
-    list_filter = ('business_partner', 'is_bill_to', 'is_ship_to', 'is_pay_from', 'is_remit_to', 'country', 'state')
+    list_filter = ('business_partner', 'is_bill_to', 'is_ship_to', 'country', 'state')
     search_fields = ('name', 'business_partner__name', 'address1', 'city', 'postal_code')
+    raw_id_fields = ('business_partner',)  # Use search widget for business partner
+    list_select_related = ('business_partner',)  # Optimize list view queries
     fieldsets = (
         ('Basic Information', {
             'fields': ('business_partner', 'name')
         }),
         ('Address', {
-            'fields': ('address1', 'address2', 'address3', 'city', 'state', 'postal_code', 'postal_code_add', 'country')
+            'fields': ('address1', 'address2', 'city', 'state', 'postal_code', 'country')
         }),
         ('Contact Information', {
-            'fields': ('phone', 'phone2', 'fax')
+            'fields': ('phone',)
         }),
         ('Location Types', {
-            'fields': ('is_bill_to', 'is_ship_to', 'is_pay_from', 'is_remit_to')
+            'fields': ('is_bill_to', 'is_ship_to')
         }),
         ('Additional Information', {
             'fields': ('comments',)
@@ -234,6 +353,21 @@ class BusinessPartnerLocationAdmin(admin.ModelAdmin):
     def get_queryset(self, request):
         """Optimize queries by selecting related objects"""
         return super().get_queryset(request).select_related('business_partner')
+    
+    def get_changeform_initial_data(self, request):
+        """Pre-fill business_partner when adding from business partner page"""
+        initial = super().get_changeform_initial_data(request)
+        
+        # Check if business_partner parameter is in the URL
+        business_partner_id = request.GET.get('business_partner')
+        if business_partner_id:
+            try:
+                business_partner = models.BusinessPartner.objects.get(pk=business_partner_id)
+                initial['business_partner'] = business_partner
+            except models.BusinessPartner.DoesNotExist:
+                pass
+        
+        return initial
 
 
 # =============================================================================

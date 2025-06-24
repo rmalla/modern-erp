@@ -20,6 +20,7 @@ from django.utils import timezone
 from decimal import Decimal
 import json
 from io import BytesIO
+from djmoney.money import Money
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter, A4
 from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, PageBreak, Image, PageTemplate, Frame
@@ -662,7 +663,7 @@ def sales_order_pdf(request, order_id):
     # Order lines (removed "Order Details" title to move table higher)
     
     # Table header - Removed Description column, fixed layout
-    line_data = [['Line', 'Product', 'Manufacturer', 'Part Number', 'Qty', 'UOM', 'Unit Price', 'Total']]
+    line_data = [['Line', 'Product', 'Manufacturer', 'Part Number', 'Unit Price', 'Qty', 'UOM', 'Total']]
     
     # Add order lines
     order_lines = order.lines.all().order_by('line_no')
@@ -687,9 +688,9 @@ def sales_order_pdf(request, order_id):
                 product_name,
                 manufacturer_name,
                 part_number,
+                f"${line.price_entered.amount:,.2f}" if line.price_entered else '',
                 f"{line.quantity_ordered:,.2f}",
                 line.product.uom.code if line.product and line.product.uom else '',
-                f"${line.price_entered.amount:,.2f}" if line.price_entered else '',
                 f"${line.line_net_amount.amount:,.2f}" if line.line_net_amount else ''
             ])
     else:
@@ -697,8 +698,8 @@ def sales_order_pdf(request, order_id):
         line_data.append(['', 'No line items found', '', '', '', '', '', ''])
     
     # Updated column widths for 8 columns to fill full document width (8.0 inches total)
-    # Line, Product, Manufacturer, Part Number, Qty, UOM, Unit Price, Total
-    invoice_col_widths = [0.5*inch, 2.2*inch, 1.4*inch, 1.2*inch, 0.6*inch, 0.5*inch, 0.8*inch, 0.8*inch]
+    # Line, Product, Manufacturer, Part Number, Unit Price, Qty, UOM, Total
+    invoice_col_widths = [0.5*inch, 2.2*inch, 1.4*inch, 1.2*inch, 0.8*inch, 0.6*inch, 0.5*inch, 0.8*inch]
 
     # Create table with optimized column widths (8 columns, fits in 8.0" content area)
     # Use Paragraph objects for text wrapping to prevent overflow
@@ -719,9 +720,9 @@ def sales_order_pdf(request, order_id):
                 product_para,  # Product (wrapped)
                 manufacturer_para,  # Manufacturer (wrapped)
                 part_number_para,  # Part Number (wrapped)
-                row[4],  # Qty
-                row[5],  # UOM
-                row[6],  # Unit Price
+                row[4],  # Unit Price
+                row[5],  # Qty
+                row[6],  # UOM
                 row[7],  # Total
             ]
             processed_line_data.append(processed_row)
@@ -741,8 +742,8 @@ def sales_order_pdf(request, order_id):
         ('FONT', (0, 1), (-1, -1), 'Helvetica'),
         ('FONTSIZE', (0, 1), (-1, -1), 9),
         ('VALIGN', (0, 1), (-1, -1), 'TOP'),
-        ('ALIGN', (4, 1), (4, -1), 'RIGHT'),  # Qty
-        ('ALIGN', (6, 1), (6, -1), 'RIGHT'),  # Unit Price
+        ('ALIGN', (4, 1), (4, -1), 'RIGHT'),  # Unit Price
+        ('ALIGN', (5, 1), (5, -1), 'RIGHT'),  # Qty
         ('ALIGN', (7, 1), (7, -1), 'RIGHT'),  # Total
         
         # Grid
@@ -768,12 +769,24 @@ def sales_order_pdf(request, order_id):
     
     # Totals - align with the new 8-column structure
     totals_data = []
-    if order.total_lines:
-        totals_data.append(['', '', '', '', '', '', 'Subtotal:', f"${order.total_lines.amount:,.2f}"])
-    if hasattr(order, 'tax_amount') and order.tax_amount:
+    
+    # Calculate totals from order lines if stored totals are zero
+    calculated_subtotal = sum(line.line_net_amount.amount for line in order_lines if line.line_net_amount)
+    
+    # Use calculated total if stored total is zero, otherwise use stored total
+    subtotal_amount = order.total_lines.amount if order.total_lines and order.total_lines.amount > 0 else calculated_subtotal
+    grand_total_amount = order.grand_total.amount if order.grand_total and order.grand_total.amount > 0 else calculated_subtotal
+    
+    if subtotal_amount > 0:
+        totals_data.append(['', '', '', '', '', '', 'Subtotal:', f"${subtotal_amount:,.2f}"])
+    
+    # Only show tax if the field exists and has a value
+    if hasattr(order, 'tax_amount') and order.tax_amount and order.tax_amount.amount > 0:
         totals_data.append(['', '', '', '', '', '', 'Tax:', f"${order.tax_amount.amount:,.2f}"])
-    if order.grand_total:
-        totals_data.append(['', '', '', '', '', '', 'Total:', f"${order.grand_total.amount:,.2f}"])
+        grand_total_amount += order.tax_amount.amount
+    
+    if grand_total_amount > 0:
+        totals_data.append(['', '', '', '', '', '', 'Total:', f"${grand_total_amount:,.2f}"])
     
     if totals_data:
         totals_table = Table(totals_data, colWidths=invoice_col_widths)
@@ -1120,10 +1133,11 @@ def invoice_pdf(request, invoice_id):
     elements.append(Paragraph("Invoice Details", heading_style))
     
     # New column widths for 8 columns (no Description), total 7.5 inches
-    invoice_col_widths = [0.35*inch, 2.3*inch, 1.0*inch, 1.1*inch, 0.6*inch, 0.45*inch, 0.65*inch, 1.05*inch]
+    # Line, Product, Manufacturer, Part Number, Unit Price, Qty, UOM, Total
+    invoice_col_widths = [0.35*inch, 2.3*inch, 1.0*inch, 1.1*inch, 0.65*inch, 0.6*inch, 0.45*inch, 1.05*inch]
 
     # Table header - Remove Description column
-    line_data = [['Line', 'Product', 'Manufacturer', 'Part Number', 'Qty', 'UOM', 'Unit Price', 'Total']]
+    line_data = [['Line', 'Product', 'Manufacturer', 'Part Number', 'Unit Price', 'Qty', 'UOM', 'Total']]
 
     # Add invoice lines - Remove Description column from data rows
     invoice_lines = invoice.lines.all().order_by('line_no')
@@ -1143,9 +1157,9 @@ def invoice_pdf(request, invoice_id):
                 Paragraph(product_name, styles['Normal']) if product_name else '',
                 manufacturer_name,
                 part_number,
+                f"${line.price_actual.amount:,.2f}" if line.price_actual else '',
                 f"{line.quantity_invoiced:,.2f}",
                 line.product.uom.code if line.product and line.product.uom else '',
-                f"${line.price_actual.amount:,.2f}" if line.price_actual else '',
                 f"${line.line_net_amount.amount:,.2f}" if line.line_net_amount else ''
             ])
     else:
@@ -1167,9 +1181,9 @@ def invoice_pdf(request, invoice_id):
         ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
         ('FONTSIZE', (0, 1), (-1, -1), 9),
         ('VALIGN', (0, 1), (-1, -1), 'TOP'),
-        ('ALIGN', (4, 1), (4, -1), 'RIGHT'),  # Qty
-        ('ALIGN', (5, 1), (5, -1), 'CENTER'),  # UOM
-        ('ALIGN', (6, 1), (6, -1), 'RIGHT'),  # Unit Price
+        ('ALIGN', (4, 1), (4, -1), 'RIGHT'),  # Unit Price
+        ('ALIGN', (5, 1), (5, -1), 'RIGHT'),  # Qty
+        ('ALIGN', (6, 1), (6, -1), 'CENTER'),  # UOM
         ('ALIGN', (7, 1), (7, -1), 'RIGHT'),  # Total
         ('ALIGN', (0, 1), (0, -1), 'CENTER'),  # Line numbers
         ('LEFTPADDING', (0, 0), (0, -1), 8),  # Extra left padding for 'Line' column
@@ -1476,3 +1490,335 @@ def shipment_workflow_action(request, shipment_id):
         messages.error(request, f'Error executing workflow action: {str(e)}')
     
     return redirect('admin:sales_shipment_change', shipment.pk)
+
+
+# =============================================================================
+# AJAX VIEWS FOR POPUP FUNCTIONALITY
+# =============================================================================
+
+@login_required
+@require_http_methods(["POST"])
+def ajax_add_order_line(request):
+    """Handle AJAX request to add a new order line via popup"""
+    print(f"🔍 AJAX ENDPOINT CALLED: ajax_add_order_line by {request.user}")
+    print(f"🔍 Request body: {request.body}")
+    try:
+        data = json.loads(request.body)
+        order_id = data.get('order_id')
+        product_id = data.get('product_id') 
+        charge_id = data.get('charge_id')
+        quantity = Decimal(str(data.get('quantity', 1)))
+        price = Decimal(str(data.get('price', 0))) if data.get('price') else None
+        description = data.get('description', '')
+        
+        # Get the sales order
+        order = get_object_or_404(SalesOrder, pk=order_id)
+        
+        # Check if order is editable
+        workflow = order.get_workflow_instance()
+        if workflow:
+            current_state = workflow.current_state.name
+            locked_states = ['pending_approval', 'approved', 'in_progress', 'complete', 'closed']
+            if current_state in locked_states:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Cannot add lines to order in {current_state} state'
+                })
+        
+        # Auto-generate next line number
+        last_line = SalesOrderLine.objects.filter(order=order).order_by('-line_no').first()
+        line_no = (last_line.line_no + 10) if last_line else 10
+        
+        # Create the order line
+        line_data = {
+            'order': order,
+            'line_no': line_no,
+            'quantity_ordered': quantity,
+            'description': description,
+            'created_by': request.user,
+            'updated_by': request.user
+        }
+        
+        # Handle product creation for new products
+        if product_id and product_id.startswith('new_'):
+            # This is a new product - create it first
+            product_data = data.get('product_data', {})
+            if not product_data:
+                return JsonResponse({
+                    'success': False,
+                    'error': 'Product data is required for new products'
+                })
+            
+            # Create the new product
+            from inventory.models import Manufacturer
+            try:
+                # Get or create manufacturer
+                manufacturer_name = product_data.get('manufacturer', 'Generic')
+                manufacturer, _ = Manufacturer.objects.get_or_create(
+                    name=manufacturer_name,
+                    defaults={'code': manufacturer_name[:10].upper()}
+                )
+                
+                # Get default UOM (Each)
+                from core.models import UnitOfMeasure
+                default_uom = UnitOfMeasure.objects.filter(code='EA').first()
+                if not default_uom:
+                    # Create EA if it doesn't exist
+                    default_uom = UnitOfMeasure.objects.create(
+                        code='EA',
+                        name='Each',
+                        symbol='ea',
+                        precision=0
+                    )
+                
+                # Create the product
+                product = Product.objects.create(
+                    name=product_data['name'],
+                    manufacturer_part_number=product_data.get('part_number', ''),
+                    manufacturer=manufacturer,
+                    short_description=product_data.get('description', ''),
+                    list_price=Money(Decimal(str(product_data.get('price', 0))), 'USD'),
+                    product_type='item',
+                    uom=default_uom,
+                    created_by=request.user,
+                    updated_by=request.user
+                )
+                
+                line_data['product'] = product
+                if not price and product.list_price and product.list_price.amount > 0:
+                    line_data['price_entered'] = product.list_price
+                    line_data['price_actual'] = product.list_price
+                    
+            except Exception as e:
+                return JsonResponse({
+                    'success': False,
+                    'error': f'Error creating product: {str(e)}'
+                })
+        
+        # Add existing product or charge
+        elif product_id:
+            product = get_object_or_404(Product, pk=product_id)
+            line_data['product'] = product
+            if not price and product.list_price and product.list_price.amount > 0:
+                line_data['price_entered'] = product.list_price
+                line_data['price_actual'] = product.list_price
+        elif charge_id:
+            from accounting.models import Charge
+            charge = get_object_or_404(Charge, pk=charge_id)
+            line_data['charge'] = charge
+        
+        if price:
+            line_data['price_entered'] = Money(price, 'USD')
+            line_data['price_actual'] = Money(price, 'USD')
+        
+        # Ensure price_actual is set if price_entered is set  
+        if 'price_entered' in line_data and line_data['price_entered']:
+            line_data['price_actual'] = line_data['price_entered']
+            line_data['price_list'] = line_data['price_entered']
+        else:
+            # Set all prices to 0 if no price is provided
+            line_data['price_entered'] = Money(0, 'USD')
+            line_data['price_actual'] = Money(0, 'USD')
+            line_data['price_list'] = Money(0, 'USD')
+            
+        # Create the line
+        order_line = SalesOrderLine.objects.create(**line_data)
+        
+        # Calculate line total (simplified)
+        if order_line.price_entered:
+            line_total = order_line.price_entered * quantity
+            order_line.line_net_amount = line_total
+            order_line.save()
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Line {line_no} added successfully',
+            'line_id': str(order_line.pk),
+            'line_no': line_no,
+            'line_total': str(line_total) if 'line_total' in locals() else '0'
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_http_methods(["GET"])
+def ajax_search_products(request):
+    """Enhanced AJAX product search with filtering capabilities"""
+    try:
+        query = request.GET.get('q', '').strip()
+        manufacturer = request.GET.get('manufacturer', '').strip()
+        date_from = request.GET.get('date_from', '').strip()
+        date_to = request.GET.get('date_to', '').strip()
+        limit = int(request.GET.get('limit', 50))
+        
+        # Base queryset
+        products = Product.objects.filter(is_active=True).select_related('manufacturer')
+        
+        # Apply search filters
+        if query:
+            products = products.filter(
+                models.Q(name__icontains=query) |
+                models.Q(manufacturer_part_number__icontains=query) |
+                models.Q(short_description__icontains=query) |
+                models.Q(manufacturer__name__icontains=query)
+            )
+        
+        if manufacturer:
+            products = products.filter(manufacturer__name__icontains=manufacturer)
+            
+        if date_from:
+            try:
+                from datetime import datetime
+                date_from_parsed = datetime.strptime(date_from, '%Y-%m-%d').date()
+                products = products.filter(created__date__gte=date_from_parsed)
+            except ValueError:
+                pass
+                
+        if date_to:
+            try:
+                from datetime import datetime
+                date_to_parsed = datetime.strptime(date_to, '%Y-%m-%d').date()
+                products = products.filter(created__date__lte=date_to_parsed)
+            except ValueError:
+                pass
+        
+        # Order by relevance and limit results
+        products = products.order_by('name')[:limit]
+        
+        # Format results
+        results = []
+        for product in products:
+            results.append({
+                'id': str(product.pk),
+                'name': product.name,
+                'part_number': product.manufacturer_part_number or 'N/A',
+                'manufacturer': product.manufacturer.name if product.manufacturer else 'N/A',
+                'price': str(product.list_price.amount) if product.list_price else '0.00',
+                'currency': product.list_price.currency.code if product.list_price else 'USD',
+                'description': product.short_description or '',
+                'created_date': product.created.strftime('%Y-%m-%d') if product.created else ''
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'results': results,
+            'total_count': len(results)
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_http_methods(["POST"])
+def ajax_create_product(request):
+    """Handle AJAX request to create a new product"""
+    try:
+        data = json.loads(request.body)
+        name = data.get('name', '').strip()
+        part_number = data.get('part_number', '').strip()
+        manufacturer_name = data.get('manufacturer', 'Generic').strip()
+        price = Decimal(str(data.get('price', 0))) if data.get('price') else Decimal('0')
+        description = data.get('description', '').strip()
+        
+        if not name:
+            return JsonResponse({
+                'success': False,
+                'error': 'Product name is required'
+            })
+        
+        # Get or create manufacturer
+        from inventory.models import Manufacturer
+        manufacturer, _ = Manufacturer.objects.get_or_create(
+            name=manufacturer_name,
+            defaults={
+                'code': manufacturer_name[:10].upper(),
+                'brand_name': manufacturer_name
+            }
+        )
+        
+        # Get default UOM (Each)  
+        from core.models import UnitOfMeasure
+        default_uom = UnitOfMeasure.objects.filter(code='EA').first()
+        if not default_uom:
+            # Create EA if it doesn't exist
+            default_uom = UnitOfMeasure.objects.create(
+                code='EA',
+                name='Each',
+                symbol='ea',
+                precision=0
+            )
+        
+        # Create the product
+        product = Product.objects.create(
+            name=name,
+            manufacturer_part_number=part_number,
+            manufacturer=manufacturer,
+            short_description=description,
+            description=description,
+            list_price=price,
+            product_type='finished_good',
+            uom=default_uom,
+            created_by=request.user,
+            updated_by=request.user
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Product "{name}" created successfully',
+            'product': {
+                'id': str(product.pk),
+                'name': product.name,
+                'part_number': product.manufacturer_part_number or 'N/A',
+                'manufacturer': product.manufacturer.name,
+                'price': str(product.list_price.amount) if product.list_price else '0.00',
+                'currency': product.list_price.currency.code if product.list_price else 'USD',
+                'description': product.short_description or ''
+            }
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_http_methods(["GET"])
+def ajax_get_manufacturers(request):
+    """Get list of manufacturers for dropdown"""
+    try:
+        from inventory.models import Manufacturer
+        
+        # Get limit from query params, default to 50, max 1000
+        limit = min(int(request.GET.get('limit', 50)), 1000)
+        
+        manufacturers = Manufacturer.objects.filter(is_active=True).order_by('name')[:limit]
+        
+        results = []
+        for manufacturer in manufacturers:
+            results.append({
+                'id': str(manufacturer.pk),
+                'name': manufacturer.name
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'manufacturers': results,
+            'count': len(results)
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
