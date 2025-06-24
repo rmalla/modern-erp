@@ -207,6 +207,60 @@ class SalesOrder(BaseModel):
             return True
         
         return False
+    
+    def can_reactivate(self):
+        """Check if this sales order can be reactivated"""
+        return self.doc_status in ['complete', 'closed']
+    
+    def reactivate(self, user=None):
+        """
+        Reactivate a completed or closed sales order.
+        Changes status back to 'in_progress' and resets workflow if applicable.
+        """
+        if not self.can_reactivate():
+            raise ValueError(f"Cannot reactivate sales order with status '{self.doc_status}'")
+        
+        # Store original status for logging
+        original_status = self.doc_status
+        
+        # Change status back to in_progress
+        self.doc_status = 'in_progress'
+        
+        # Reset workflow state if workflow exists
+        workflow_instance = self.get_workflow_instance()
+        if workflow_instance and workflow_instance.workflow_definition:
+            try:
+                from core.models import WorkflowState
+                in_progress_state = WorkflowState.objects.get(
+                    workflow=workflow_instance.workflow_definition,
+                    name='in_progress'
+                )
+                workflow_instance.current_state = in_progress_state
+                workflow_instance.save()
+            except WorkflowState.DoesNotExist:
+                # If no in_progress state, try to find initial state
+                try:
+                    initial_state = WorkflowState.objects.get(
+                        workflow=workflow_instance.workflow_definition,
+                        name=workflow_instance.workflow_definition.initial_state
+                    )
+                    workflow_instance.current_state = initial_state
+                    workflow_instance.save()
+                except WorkflowState.DoesNotExist:
+                    pass  # No workflow states available
+        
+        # Clear some completion-related fields if needed
+        if original_status == 'complete':
+            self.date_delivered = None
+        
+        # Update audit fields
+        if user:
+            self.updated_by = user
+        
+        # Save the changes
+        self.save()
+        
+        return f"Sales order {self.document_no} reactivated from '{original_status}' to 'in_progress'"
 
 
 class SalesOrderLine(BaseModel):

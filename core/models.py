@@ -170,67 +170,20 @@ class BusinessPartner(BaseModel):
 
 class Opportunity(BaseModel):
     """
-    Opportunity model - Central hub for all related documents.
-    Provides unified tracking across sales orders, purchase orders, invoices, shipments, etc.
+    Opportunity/Project model - Serves as a reference point for all related documents.
+    Can be linked to sales orders, purchase orders, invoices, shipments, etc.
     Format: Q #718923
     """
-    OPPORTUNITY_STAGES = [
-        ('prospecting', 'Prospecting'),
-        ('qualification', 'Qualification'),
-        ('proposal', 'Proposal'),
-        ('negotiation', 'Negotiation'),
-        ('closed_won', 'Closed Won'),
-        ('closed_lost', 'Closed Lost'),
-        ('on_hold', 'On Hold'),
-    ]
-    
-    PRIORITY_LEVELS = [
-        ('low', 'Low'),
-        ('medium', 'Medium'),
-        ('high', 'High'),
-        ('urgent', 'Urgent'),
-    ]
-    
     # Opportunity identification
     opportunity_number = models.CharField(max_length=50, unique=True, help_text="Q #718923 format")
-    name = models.CharField(max_length=200, help_text="Descriptive name for the opportunity")
+    name = models.CharField(max_length=200, help_text="Descriptive name for the opportunity/project")
     description = models.TextField(blank=True)
     
-    # Business partner and contact
-    business_partner = models.ForeignKey(BusinessPartner, on_delete=models.PROTECT, 
-                                       limit_choices_to={'is_customer': True},
-                                       help_text="Primary customer for this opportunity")
-    contact_person = models.CharField(max_length=200, blank=True)
-    contact_email = models.EmailField(blank=True)
-    contact_phone = models.CharField(max_length=50, blank=True)
-    
-    # Opportunity details
-    stage = models.CharField(max_length=20, choices=OPPORTUNITY_STAGES, default='prospecting')
-    priority = models.CharField(max_length=10, choices=PRIORITY_LEVELS, default='medium')
-    probability = models.DecimalField(max_digits=5, decimal_places=2, default=0, 
-                                    help_text="Probability of closing (0-100%)")
-    
-    # Financial information
-    estimated_value = MoneyField(max_digits=15, decimal_places=2, default_currency='USD', 
-                               null=True, blank=True, help_text="Estimated total opportunity value")
-    actual_value = MoneyField(max_digits=15, decimal_places=2, default_currency='USD', 
-                            null=True, blank=True, help_text="Actual closed value")
-    
-    # Dates
-    date_opened = models.DateField(default=timezone.now)
-    expected_close_date = models.DateField(null=True, blank=True)
-    actual_close_date = models.DateField(null=True, blank=True)
-    
-    # Sales information
-    sales_rep = models.ForeignKey('User', on_delete=models.SET_NULL, null=True, blank=True,
-                                related_name='opportunities')
-    source = models.CharField(max_length=100, blank=True, help_text="Lead source (website, referral, etc.)")
-    
-    # Internal notes
-    notes = models.TextField(blank=True, help_text="Internal notes and updates")
+    # Simple status tracking
+    is_active = models.BooleanField(default=True, help_text="Whether this opportunity is currently active")
     
     class Meta:
-        ordering = ['-date_opened', 'opportunity_number']
+        ordering = ['-opportunity_number']
         verbose_name_plural = 'Opportunities'
         
     def __str__(self):
@@ -256,36 +209,6 @@ class Opportunity(BaseModel):
                 pass
         
         return "Q #000001"
-    
-    @property
-    def total_sales_orders(self):
-        """Count of related sales orders"""
-        return self.sales_orders.count()
-    
-    @property
-    def total_purchase_orders(self):
-        """Count of related purchase orders"""
-        return self.purchase_orders.count()
-    
-    @property
-    def total_invoices(self):
-        """Count of related invoices"""
-        return self.invoices.count()
-    
-    @property
-    def total_shipments(self):
-        """Count of related shipments"""
-        return self.shipments.count()
-    
-    @property
-    def is_closed(self):
-        """Check if opportunity is closed (won or lost)"""
-        return self.stage in ['closed_won', 'closed_lost']
-    
-    @property
-    def is_active(self):
-        """Check if opportunity is still active"""
-        return self.stage not in ['closed_won', 'closed_lost']
 
 
 class PaymentTerms(BaseModel):

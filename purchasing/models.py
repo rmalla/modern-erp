@@ -101,6 +101,27 @@ class PurchaseOrder(BaseModel):
         
     def __str__(self):
         return f"{self.document_no} - {self.business_partner.name}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-generate document number if not provided
+        if not self.document_no:
+            self.document_no = self._generate_document_number()
+        super().save(*args, **kwargs)
+    
+    def _generate_document_number(self):
+        """Generate next purchase order number in PO-XXXXXX format"""
+        last_po = PurchaseOrder.objects.filter(
+            document_no__startswith='PO-'
+        ).order_by('-document_no').first()
+        
+        if last_po and last_po.document_no.startswith('PO-'):
+            try:
+                last_num = int(last_po.document_no[3:])  # Remove 'PO-'
+                return f"PO-{last_num + 1:06d}"
+            except ValueError:
+                pass
+        
+        return "PO-000001"
 
 
 class PurchaseOrderLine(BaseModel):
@@ -228,6 +249,27 @@ class VendorBill(BaseModel):
         
     def __str__(self):
         return f"{self.document_no} - {self.business_partner.name}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-generate document number if not provided
+        if not self.document_no:
+            self.document_no = self._generate_document_number()
+        super().save(*args, **kwargs)
+    
+    def _generate_document_number(self):
+        """Generate next vendor bill number in VB-XXXXXX format"""
+        last_vb = VendorBill.objects.filter(
+            document_no__startswith='VB-'
+        ).order_by('-document_no').first()
+        
+        if last_vb and last_vb.document_no.startswith('VB-'):
+            try:
+                last_num = int(last_vb.document_no[3:])  # Remove 'VB-'
+                return f"VB-{last_num + 1:06d}"
+            except ValueError:
+                pass
+        
+        return "VB-000001"
 
 
 class VendorBillLine(BaseModel):
@@ -327,6 +369,27 @@ class Receipt(BaseModel):
         
     def __str__(self):
         return f"{self.document_no} - {self.business_partner.name}"
+    
+    def save(self, *args, **kwargs):
+        # Auto-generate document number if not provided
+        if not self.document_no:
+            self.document_no = self._generate_document_number()
+        super().save(*args, **kwargs)
+    
+    def _generate_document_number(self):
+        """Generate next receipt number in RC-XXXXXX format"""
+        last_rc = Receipt.objects.filter(
+            document_no__startswith='RC-'
+        ).order_by('-document_no').first()
+        
+        if last_rc and last_rc.document_no.startswith('RC-'):
+            try:
+                last_num = int(last_rc.document_no[3:])  # Remove 'RC-'
+                return f"RC-{last_num + 1:06d}"
+            except ValueError:
+                pass
+        
+        return "RC-000001"
 
 
 class ReceiptLine(BaseModel):

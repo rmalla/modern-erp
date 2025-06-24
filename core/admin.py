@@ -137,53 +137,17 @@ class NumberSequenceAdmin(admin.ModelAdmin):
 
 @admin.register(models.Opportunity)
 class OpportunityAdmin(admin.ModelAdmin):
-    list_display = ('opportunity_number', 'name', 'business_partner', 'stage', 'priority', 
-                   'estimated_value', 'probability', 'expected_close_date', 'sales_rep')
-    list_filter = ('stage', 'priority', 'sales_rep', 'date_opened', 'expected_close_date')
-    search_fields = ('opportunity_number', 'name', 'business_partner__name', 'description')
-    date_hierarchy = 'date_opened'
+    list_display = ('opportunity_number', 'name', 'is_active')
+    list_filter = ('is_active',)
+    search_fields = ('opportunity_number', 'name', 'description')
     
     fieldsets = (
         ('Opportunity Information', {
-            'fields': ('opportunity_number', 'name', 'description')
-        }),
-        ('Customer & Contact', {
-            'fields': ('business_partner', 'contact_person', 'contact_email', 'contact_phone')
-        }),
-        ('Opportunity Details', {
-            'fields': ('stage', 'priority', 'probability', 'sales_rep', 'source')
-        }),
-        ('Financial Information', {
-            'fields': ('estimated_value', 'actual_value')
-        }),
-        ('Timeline', {
-            'fields': ('date_opened', 'expected_close_date', 'actual_close_date')
-        }),
-        ('Notes', {
-            'fields': ('notes',)
+            'fields': ('opportunity_number', 'name', 'description', 'is_active')
         }),
     )
     
     readonly_fields = ('opportunity_number',)  # Auto-generated
-    
-    # Add related document counts as readonly fields
-    def get_readonly_fields(self, request, obj=None):
-        readonly_fields = list(super().get_readonly_fields(request, obj))
-        if obj:  # Only show counts for existing opportunities
-            readonly_fields.extend(['document_summary'])
-        return readonly_fields
-    
-    def document_summary(self, obj):
-        """Show summary of related documents"""
-        if not obj:
-            return "Save opportunity first"
-        
-        return f"Sales Orders: {obj.total_sales_orders} | " \
-               f"Purchase Orders: {obj.total_purchase_orders} | " \
-               f"Invoices: {obj.total_invoices} | " \
-               f"Shipments: {obj.total_shipments}"
-    
-    document_summary.short_description = "Related Documents"
 
 
 @admin.register(models.PaymentTerms)
