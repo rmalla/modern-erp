@@ -243,7 +243,7 @@ The project follows a clean, organized structure separating active code from one
 
 1. **Base Model Pattern**: All models inherit from `BaseModel` providing:
    - UUID primary keys for distributed systems
-   - Automatic audit fields (created_at, updated_at, created_by, updated_by)
+   - Automatic audit fields (created, updated, created_by, updated_by)
    - Soft delete support with is_active flag
    - Organization-level data isolation
 
@@ -300,3 +300,57 @@ The project follows a clean, organized structure separating active code from one
 - REST API endpoints for external system integration
 - Event-driven architecture preparation for webhooks
 - Background task processing via Celery
+
+## Recent System Enhancements
+
+### Unified Product Inline System
+The system now features a unified template system for product selection across all document types:
+
+- **Base Template**: `/templates/admin/core/product_inline_base.html` - Reusable template for any document type
+- **Modal Product Search**: Advanced search with filters (name, manufacturer, part number, date range)
+- **Product Creation**: Create new products directly from selection modal with manufacturer autocomplete
+- **Template Variables**: Configurable via `document_type`, `app_name`, `admin_url_name` context variables
+- **AJAX Endpoints**: Standardized patterns for `ajax_search_products`, `ajax_get_manufacturers`, `ajax_add_order_line`
+
+**Implementation Pattern**:
+```django
+{# In document-specific template #}
+{% with document_type="sales_order" app_name="sales" admin_url_name="admin:sales_salesorderline_change" %}
+    {% include "admin/core/product_inline_base.html" %}
+{% endwith %}
+```
+
+### Purchase Order Enhancements
+- **Smart Defaults**: Automatic population of organization, currency, warehouse, price list, and date
+- **Model-Level Defaults**: Functions like `get_default_organization()`, `get_today_date()`
+- **Admin Defaults**: `get_changeform_initial_data()` method ensures defaults appear in forms
+
+### Sales/Invoice Totals Calculation
+- **Auto-Calculation**: `calculate_totals()` method on SalesOrder and Invoice models
+- **Line Item Aggregation**: Automatically sums line amounts when stored totals are missing
+- **PDF Integration**: Fallback calculation in PDF generation for legacy data
+
+### Advanced Admin Customizations
+- **Readonly Display Fields**: Custom display methods for inline forms (`product_display`, `quantity_display`, etc.)
+- **Workflow-Aware Permissions**: Dynamic field locking based on document workflow state
+- **Custom Templates**: Document-specific admin templates with enhanced UX
+
+### Field Name Corrections
+- **BaseModel Fields**: Uses `created`/`updated` (not `created_at`/`updated_at`)
+- **Address Fields**: Removed deprecated `address3` references from `full_address` and `full_address_with_name` methods
+- **Consistent Naming**: Standardized field names across all search and display functionality
+
+## Development Patterns
+
+### Adding New Document Types to Unified Product Selection
+1. Create template: `/templates/admin/[app]/[model]line_inline.html`
+2. Include base template with proper context variables
+3. Add AJAX views: `ajax_search_products`, `ajax_get_manufacturers`, `ajax_add_order_line`  
+4. Update admin inline class to use custom template and display methods
+5. Add URL patterns for AJAX endpoints
+
+### Model Field Access Patterns
+- **Date Fields**: Use `model.created` and `model.updated` (BaseModel pattern)
+- **Address Display**: Use `full_address` or `full_address_with_name` methods
+- **Money Fields**: django-money handles currency and amount attributes automatically
+- **Foreign Key Defaults**: Use callable functions for dynamic defaults

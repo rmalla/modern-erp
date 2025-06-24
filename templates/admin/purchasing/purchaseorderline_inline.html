@@ -1,6 +1,6 @@
 {% load i18n admin_urls static admin_modify %}
 
 {# Set template context variables #}
-{% with document_type="sales_order" app_name="sales" admin_url_name="admin:sales_salesorderline_change" %}
+{% with document_type="purchase_order" app_name="purchasing" admin_url_name="admin:purchasing_purchaseorderline_change" %}
     {% include "admin/core/product_inline_base.html" %}
 {% endwith %}

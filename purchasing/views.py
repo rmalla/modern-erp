@@ -427,3 +427,195 @@ def purchase_order_pdf(request, order_id):
     response.write(pdf)
     
     return response
+
+
+@login_required
+@require_http_methods(["GET"])
+def ajax_search_products(request):
+    """Search products for purchase order lines"""
+    try:
+        query = request.GET.get('q', '').strip()
+        manufacturer = request.GET.get('manufacturer', '').strip()
+        date_from = request.GET.get('date_from', '').strip()
+        date_to = request.GET.get('date_to', '').strip()
+        limit = int(request.GET.get('limit', 50))
+        
+        from inventory.models import Product
+        
+        # Start with all active products
+        products = Product.objects.filter(is_active=True)
+        
+        # Apply search filters
+        if query:
+            products = products.filter(
+                models.Q(name__icontains=query) |
+                models.Q(manufacturer_part_number__icontains=query) |
+                models.Q(description__icontains=query)
+            )
+        
+        if manufacturer:
+            products = products.filter(manufacturer__name__icontains=manufacturer)
+        
+        if date_from:
+            from datetime import datetime
+            date_from_obj = datetime.strptime(date_from, '%Y-%m-%d').date()
+            products = products.filter(created__date__gte=date_from_obj)
+        
+        if date_to:
+            from datetime import datetime
+            date_to_obj = datetime.strptime(date_to, '%Y-%m-%d').date()
+            products = products.filter(created__date__lte=date_to_obj)
+        
+        # Limit results and select related data
+        products = products.select_related('manufacturer', 'uom')[:limit]
+        
+        # Format results
+        results = []
+        for product in products:
+            results.append({
+                'id': str(product.id),
+                'name': product.name,
+                'part_number': product.manufacturer_part_number or 'N/A',
+                'manufacturer': product.manufacturer.name if product.manufacturer else 'N/A',
+                'price': str(product.list_price.amount) if product.list_price else '0.00',
+                'currency': product.list_price.currency.code if product.list_price else 'USD',
+                'description': product.description or '',
+                'created_date': product.created.strftime('%Y-%m-%d') if product.created else None
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'results': results,
+            'count': len(results)
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })
+
+
+@login_required
+@require_http_methods(["GET"])
+def ajax_get_manufacturers(request):
+    """Get list of manufacturers for autocomplete"""
+    try:
+        limit = int(request.GET.get('limit', 100))
+        
+        from inventory.models import Manufacturer
+        
+        manufacturers = Manufacturer.objects.filter(is_active=True)[:limit]
+        
+        results = []
+        for manufacturer in manufacturers:
+            results.append({
+                'name': manufacturer.name
+            })
+        
+        return JsonResponse({
+            'success': True,
+            'manufacturers': results
+        })
+        
+    except Exception as e:
+        return JsonResponse({
+            'success': False,
+            'error': str(e),
+            'manufacturers': []
+        })
+
+
+@login_required
+@require_http_methods(["POST"])
+def ajax_add_order_line(request):
+    """Add a new line to a purchase order"""
+    try:
+        data = json.loads(request.body)
+        order_id = data.get('order_id')
+        product_id = data.get('product_id')
+        quantity = float(data.get('quantity', 1))
+        price = data.get('price')
+        description = data.get('description', '')
+        
+        # Get the purchase order
+        order = get_object_or_404(PurchaseOrder, id=order_id)
+        
+        # Check if it's a new product to be created
+        if product_id.startswith('new_'):
+            product_data = data.get('product_data', {})
+            
+            # Create new product
+            from inventory.models import Product, Manufacturer, UnitOfMeasure
+            from djmoney.money import Money
+            
+            # Get or create manufacturer
+            manufacturer_name = product_data.get('manufacturer', 'Generic')
+            manufacturer, created = Manufacturer.objects.get_or_create(
+                name=manufacturer_name,
+                defaults={'is_active': True}
+            )
+            
+            # Get default UOM (Each)
+            uom, created = UnitOfMeasure.objects.get_or_create(
+                code='EA',
+                defaults={'name': 'Each', 'is_active': True}
+            )
+            
+            # Create product
+            product = Product.objects.create(
+                name=product_data.get('name'),
+                manufacturer_part_number=product_data.get('part_number', ''),
+                manufacturer=manufacturer,
+                uom=uom,
+                list_price=Money(float(product_data.get('price', 0)), 'USD'),
+                description=product_data.get('description', ''),
+                is_active=True,
+                organization=order.organization
+            )
+            
+        else:
+            # Use existing product
+            from inventory.models import Product
+            product = get_object_or_404(Product, id=product_id)
+        
+        # Get next line number
+        last_line = order.lines.order_by('-line_no').first()
+        next_line_no = (last_line.line_no + 10) if last_line else 10
+        
+        # Create order line
+        from djmoney.money import Money
+        
+        # Use provided price or default to product list price
+        if price is not None:
+            line_price = Money(float(price), 'USD')
+        else:
+            line_price = product.list_price or Money(0, 'USD')
+        
+        # Calculate line total
+        line_total = Money(float(quantity) * float(line_price.amount), 'USD')
+        
+        order_line = PurchaseOrderLine.objects.create(
+            order=order,
+            line_no=next_line_no,
+            product=product,
+            description=description,
+            quantity_ordered=quantity,
+            price_entered=line_price,
+            price_actual=line_price,
+            line_net_amount=line_total
+        )
+        
+        return JsonResponse({
+            'success': True,
+            'message': f'Line {next_line_no} added successfully',
+            'line_id': str(order_line.id)
+        })
+        
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        })

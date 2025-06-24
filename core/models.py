@@ -417,8 +417,6 @@ class BusinessPartnerLocation(BaseModel):
             address_lines.append(self.address1)
         if self.address2:
             address_lines.append(self.address2)
-        if self.address3:
-            address_lines.append(self.address3)
         
         if self.city or self.state or self.postal_code:
             city_state_zip = []

@@ -83,40 +83,68 @@ class PurchaseOrderForm(DocumentContactForm):
 
 class PurchaseOrderLineInline(admin.TabularInline):
     model = models.PurchaseOrderLine
-    extra = 0
-    fields = ('line_no', 'product', 'charge', 'description', 'quantity_ordered', 'price_entered', 'discount', 'line_net_amount')
+    extra = 0  # No empty fields
+    readonly_fields = ('line_link', 'product_display', 'quantity_display', 'price_display', 'line_total_display')
+    can_delete = True
+    show_change_link = False  # We'll use our custom link
+    verbose_name = "Order Line"
+    verbose_name_plural = "Purchase Order Lines"
+    template = 'admin/purchasing/purchaseorderline_inline.html'  # Custom template
+    
+    def get_fields(self, request, obj=None):
+        """Return the readonly fields for display"""
+        return self.readonly_fields
+    
+    def line_link(self, obj):
+        """Display line number as link to edit page"""
+        if obj.pk:
+            from django.urls import reverse
+            from django.utils.html import format_html
+            url = reverse('admin:purchasing_purchaseorderline_change', args=[obj.pk])
+            return format_html('<a href="{}" target="_blank"><strong>Line {}</strong></a>', url, obj.line_no)
+        return "-"
+    line_link.short_description = "Line #"
+    
+    def product_display(self, obj):
+        """Display product information"""
+        if obj.product:
+            return f"{obj.product.name}"
+        elif obj.charge:
+            return f"⚡ {obj.charge.name}"
+        else:
+            return obj.description or "-"
+    product_display.short_description = "Product/Charge"
+    
+    def quantity_display(self, obj):
+        """Display quantity ordered"""
+        return obj.quantity_ordered
+    quantity_display.short_description = "Qty"
+    
+    def price_display(self, obj):
+        """Display unit price"""
+        if obj.price_entered:
+            return f"${obj.price_entered.amount:.2f}"
+        return "-"
+    price_display.short_description = "Unit Price"
+    
+    def line_total_display(self, obj):
+        """Display line total"""
+        if obj.line_net_amount:
+            return f"${obj.line_net_amount.amount:.2f}"
+        return "-"
+    line_total_display.short_description = "Line Total"
     
     def get_readonly_fields(self, request, obj=None):
-        """Make line fields readonly when purchase order is locked"""
-        readonly_fields = []
-        
-        if obj:  # obj is the parent PurchaseOrder
-            workflow_instance = obj.get_workflow_instance()
-            if workflow_instance and workflow_instance.current_state:
-                current_state = workflow_instance.current_state.name
-                locked_states = ['pending_approval', 'approved', 'in_progress', 'complete', 'closed']
-                
-                if current_state in locked_states:
-                    # Lock all line fields when document is locked
-                    readonly_fields = [
-                        'line_no', 'product', 'charge', 'description', 
-                        'quantity_ordered', 'price_entered', 'discount', 'line_net_amount'
-                    ]
-        
-        return readonly_fields
+        """Always return our display fields since we use custom template"""
+        return ('line_link', 'product_display', 'quantity_display', 'price_display', 'line_total_display')
     
     def has_add_permission(self, request, obj=None):
-        """Prevent adding lines when purchase order is locked"""
-        if obj:  # obj is the parent PurchaseOrder
-            workflow_instance = obj.get_workflow_instance()
-            if workflow_instance and workflow_instance.current_state:
-                current_state = workflow_instance.current_state.name
-                locked_states = ['pending_approval', 'approved', 'in_progress', 'complete', 'closed']
-                
-                if current_state in locked_states:
-                    return False
-        
-        return super().has_add_permission(request, obj)
+        """Disable adding through inline - use the add button instead"""
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        """Disable changing through inline - use the edit link instead"""
+        return False
     
     def has_delete_permission(self, request, obj=None):
         """Prevent deleting lines when purchase order is locked"""
@@ -147,6 +175,45 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     date_hierarchy = 'date_ordered'
     inlines = [PurchaseOrderLineInline]
     autocomplete_fields = ['opportunity', 'business_partner', 'ship_to_customer']
+    
+    def get_changeform_initial_data(self, request):
+        """Set initial data for the change form (when adding new purchase orders)"""
+        from purchasing.models import (
+            get_default_organization,
+            get_default_currency,
+            get_default_warehouse,
+            get_default_purchase_price_list,
+            get_today_date
+        )
+        
+        initial = super().get_changeform_initial_data(request)
+        
+        try:
+            initial['date_ordered'] = get_today_date()
+        except:
+            pass
+            
+        try:
+            initial['organization'] = get_default_organization()
+        except:
+            pass
+            
+        try:
+            initial['currency'] = get_default_currency()
+        except:
+            pass
+            
+        try:
+            initial['warehouse'] = get_default_warehouse()
+        except:
+            pass
+            
+        try:
+            initial['price_list'] = get_default_purchase_price_list()
+        except:
+            pass
+            
+        return initial
     
     def get_urls(self):
         """Add workflow action URLs"""

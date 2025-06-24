@@ -640,6 +640,26 @@ class Invoice(BaseModel):
         
         return f"Invoice {self.document_no} reactivated from '{original_status}' to 'sent'"
 
+    def calculate_totals(self):
+        """Calculate and update invoice totals from line items"""
+        from djmoney.money import Money
+        
+        total_lines_amount = 0
+        for line in self.lines.all():
+            if line.line_net_amount:
+                total_lines_amount += line.line_net_amount.amount
+        
+        self.total_lines = Money(total_lines_amount, 'USD')
+        self.grand_total = self.total_lines  # For now, same as total_lines (no tax)
+        
+        # Update open amount if not paid
+        if not self.is_paid:
+            self.open_amount = self.grand_total - self.paid_amount
+        
+        self.save()
+        
+        return self.grand_total
+
 
 class InvoiceLine(BaseModel):
     """

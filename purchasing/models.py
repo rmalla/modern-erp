@@ -8,8 +8,51 @@ from django.db import models
 from django.core.validators import MinValueValidator
 from djmoney.models.fields import MoneyField
 from decimal import Decimal
+from django.utils import timezone
 from core.models import BaseModel, Organization, BusinessPartner, NumberSequence, Opportunity, PaymentTerms, Incoterms, Contact, BusinessPartnerLocation
 from inventory.models import Product, Warehouse, PriceList
+
+
+def get_default_organization():
+    """Get default organization (Main Organization)"""
+    try:
+        return Organization.objects.get(name='Main Organization')
+    except Organization.DoesNotExist:
+        return Organization.objects.first()
+
+
+def get_default_currency():
+    """Get default currency (USD)"""
+    try:
+        from core.models import Currency
+        return Currency.objects.get(iso_code='USD')
+    except:
+        from core.models import Currency
+        return Currency.objects.first()
+
+
+def get_default_warehouse():
+    """Get default warehouse (Main Organization - Main Warehouse)"""
+    try:
+        return Warehouse.objects.get(name='Main Warehouse')
+    except Warehouse.DoesNotExist:
+        return Warehouse.objects.first()
+
+
+def get_default_purchase_price_list():
+    """Get default purchase price list (Main Organization - Standard Purchase Price List)"""
+    try:
+        return PriceList.objects.get(
+            name='Main Organization - Standard Purchase Price List',
+            is_purchase_price_list=True
+        )
+    except PriceList.DoesNotExist:
+        return PriceList.objects.filter(is_purchase_price_list=True).first()
+
+
+def get_today_date():
+    """Get today's date"""
+    return timezone.now().date()
 
 
 class PurchaseOrder(BaseModel):
@@ -29,13 +72,13 @@ class PurchaseOrder(BaseModel):
     ]
     
     # Document information
-    organization = models.ForeignKey(Organization, on_delete=models.CASCADE)
+    organization = models.ForeignKey(Organization, on_delete=models.CASCADE, default=get_default_organization)
     document_no = models.CharField(max_length=50, unique=True)
     description = models.TextField(blank=True)
     doc_status = models.CharField(max_length=20, choices=DOC_STATUS_CHOICES, default='drafted')
     
     # Dates
-    date_ordered = models.DateField()
+    date_ordered = models.DateField(default=get_today_date)
     date_promised = models.DateField(null=True, blank=True)
     date_received = models.DateField(null=True, blank=True)
     
@@ -74,8 +117,8 @@ class PurchaseOrder(BaseModel):
                                   related_name='purchase_orders', help_text="Related opportunity (Q #XXXXXX)")
     
     # Pricing and terms
-    price_list = models.ForeignKey(PriceList, on_delete=models.PROTECT, limit_choices_to={'is_purchase_price_list': True})
-    currency = models.ForeignKey('core.Currency', on_delete=models.PROTECT)
+    price_list = models.ForeignKey(PriceList, on_delete=models.PROTECT, limit_choices_to={'is_purchase_price_list': True}, default=get_default_purchase_price_list)
+    currency = models.ForeignKey('core.Currency', on_delete=models.PROTECT, default=get_default_currency)
     payment_terms = models.ForeignKey(PaymentTerms, on_delete=models.PROTECT, null=True, blank=True)
     incoterms = models.ForeignKey(Incoterms, on_delete=models.PROTECT, null=True, blank=True)
     incoterms_location = models.CharField(max_length=200, blank=True, help_text="Location for incoterms (e.g., 'Miami Port' for EXW Miami Port)")
@@ -85,7 +128,7 @@ class PurchaseOrder(BaseModel):
     grand_total = MoneyField(max_digits=15, decimal_places=2, default_currency='USD', default=0)
     
     # Warehouse and delivery
-    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT)
+    warehouse = models.ForeignKey(Warehouse, on_delete=models.PROTECT, default=get_default_warehouse)
     delivery_via = models.CharField(max_length=100, blank=True)
     delivery_rule = models.CharField(max_length=50, default='Availability')
     freight_cost_rule = models.CharField(max_length=50, default='Freight Included')

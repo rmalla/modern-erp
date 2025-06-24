@@ -1,0 +1,980 @@
+{% load i18n admin_urls static admin_modify %}
+
+{# Template variables that should be set by the including template #}
+{# document_type: "sales_order", "purchase_order", "sales_invoice", "purchase_invoice" #}
+{# app_name: "sales", "purchasing" #}
+{# admin_url_name: URL pattern for line edit page #}
+
+<div class="inline-group" id="{{ inline_admin_formset.formset.prefix }}-group">
+    <div class="tabular inline-related">
+        <fieldset class="module">
+            <h2>{{ inline_admin_formset.opts.verbose_name_plural|capfirst }}</h2>
+            
+            {# Add Line Button #}
+            {% if original.pk %}
+                <div class="add-line-section" style="margin-bottom: 15px;">
+                    <button type="button" 
+                            class="addlink-button" 
+                            onclick="openAddLineModal('{{ original.pk }}', '{{ document_type }}', '{{ app_name }}')"
+                            style="background: none; border: none; padding: 0; color: #417690; text-decoration: none; cursor: pointer;">
+                        <img src="{% static 'admin/img/icon-addlink.svg' %}" alt="Add" style="vertical-align: middle; margin-right: 8px;">
+                        Add {{ inline_admin_formset.opts.verbose_name }}
+                    </button>
+                    <span style="margin-left: 20px; color: #666; font-size: 12px;">
+                        (Opens popup with advanced product search)
+                    </span>
+                </div>
+            {% endif %}
+            
+            {% if inline_admin_formset.formset.forms %}
+                <table class="orderline-inline-table">
+                    <thead>
+                        <tr>
+                            <th class="line-number-col">{% trans "Line #" %}</th>
+                            <th class="product-col">{% trans "Product / Charge" %}</th>
+                            <th class="quantity-col">{% trans "Qty" %}</th>
+                            <th class="price-col">{% trans "Unit Price" %}</th>
+                            <th class="total-col">{% trans "Line Total" %}</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orderlines-tbody">
+                        {% for inline_admin_form in inline_admin_formset %}
+                            {% if inline_admin_form.original %}
+                                <tr class="form-row {% cycle 'row1' 'row2' %} readonly-line-row">
+                                    <td class="field-line_link line-number-col">
+                                        <a href="{% url admin_url_name inline_admin_form.original.pk %}" target="_blank">
+                                            <strong>Line {{ inline_admin_form.original.line_no }}</strong>
+                                        </a>
+                                    </td>
+                                    <td class="field-product_display product-col">
+                                        {% if inline_admin_form.original.product %}
+                                            <div class="product-info">
+                                                <div class="product-name"><strong>{{ inline_admin_form.original.product.name }}</strong></div>
+                                                <div class="product-part-number">{{ inline_admin_form.original.product.manufacturer_part_number|default:"N/A" }}</div>
+                                            </div>
+                                        {% elif inline_admin_form.original.charge %}
+                                            <div class="charge-info">
+                                                <span style="color: #f39c12;">⚡</span> {{ inline_admin_form.original.charge.name }}
+                                            </div>
+                                        {% else %}
+                                            {{ inline_admin_form.original.description|default:"-" }}
+                                        {% endif %}
+                                    </td>
+                                    <td class="field-quantity_display quantity-col">
+                                        {% if document_type == "sales_order" or document_type == "sales_invoice" %}
+                                            {{ inline_admin_form.original.quantity_ordered }}
+                                        {% else %}
+                                            {{ inline_admin_form.original.quantity_ordered }}
+                                        {% endif %}
+                                    </td>
+                                    <td class="field-price_display price-col">
+                                        {% if inline_admin_form.original.price_entered %}
+                                            ${{ inline_admin_form.original.price_entered.amount|floatformat:2 }}
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                    <td class="field-line_total_display total-col">
+                                        {% if inline_admin_form.original.line_net_amount %}
+                                            <strong>${{ inline_admin_form.original.line_net_amount.amount|floatformat:2 }}</strong>
+                                        {% else %}
+                                            -
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                            {% endif %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            {% else %}
+                <div class="no-lines-message" style="padding: 20px; text-align: center; color: #666; font-style: italic; background-color: #f9f9f9; border: 1px dashed #ddd; margin: 10px 0;">
+                    No order lines added yet.
+                </div>
+            {% endif %}
+            
+            {# Hidden management form fields #}
+            {{ inline_admin_formset.formset.management_form }}
+            {% for inline_admin_form in inline_admin_formset %}
+                {% for hidden in inline_admin_form.form.hidden_fields %}
+                    {{ hidden }}
+                {% endfor %}
+            {% endfor %}
+        </fieldset>
+    </div>
+</div>
+
+{# Add Order Line Modal #}
+<div id="addLineModal" class="modal" style="display: none;">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>Add Order Line</h3>
+            <span class="close" onclick="closeAddLineModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+            {# Product Search Section #}
+            <div class="search-section">
+                <h4>Search Products</h4>
+                <div class="search-filters">
+                    <div class="filter-row">
+                        <label>Search:</label>
+                        <input type="text" id="productSearch" placeholder="Product name, part number, description..." style="width: 300px;">
+                        <button type="button" onclick="searchProducts()" class="button">Search</button>
+                    </div>
+                    <div class="filter-row">
+                        <label>Manufacturer:</label>
+                        <input type="text" id="manufacturerFilter" placeholder="Manufacturer name..." style="width: 200px;">
+                        <label style="margin-left: 20px;">Date Range:</label>
+                        <input type="date" id="dateFromFilter" style="width: 150px;">
+                        <span>to</span>
+                        <input type="date" id="dateToFilter" style="width: 150px;">
+                        <button type="button" onclick="clearFilters()" class="button" style="margin-left: 10px;">Clear</button>
+                    </div>
+                </div>
+                <div id="searchResults" class="search-results">
+                    <p style="text-align: center; color: #666; padding: 20px;">Enter search criteria and click Search to find products</p>
+                </div>
+                
+                {# Create New Product Section #}
+                <div class="create-product-section" style="margin-top: 15px; padding: 10px; background-color: #f0f8ff; border: 1px solid #b3d9ff; border-radius: 4px;">
+                    <p style="margin: 0; color: #666;">
+                        <strong>Product not found?</strong> 
+                        <button type="button" onclick="toggleCreateProductForm()" class="button" style="margin-left: 10px;">Create New Product</button>
+                    </p>
+                </div>
+            </div>
+            
+            {# Create New Product Form #}
+            <div id="createProductSection" class="create-product-form" style="display: none;">
+                <h4>Create New Product</h4>
+                <div class="form-grid">
+                    <div class="form-row">
+                        <label>Product Name:</label>
+                        <input type="text" id="newProductName" placeholder="Product name..." style="width: 300px;" required>
+                    </div>
+                    <div class="form-row">
+                        <label>Part Number:</label>
+                        <input type="text" id="newProductPartNumber" placeholder="Manufacturer part number..." style="width: 200px;">
+                    </div>
+                    <div class="form-row">
+                        <label>Manufacturer:</label>
+                        <div style="position: relative; display: inline-block;">
+                            <input type="text" id="newProductManufacturer" placeholder="Type to search manufacturers..." style="width: 250px;" autocomplete="off">
+                            <div id="manufacturerDropdown" class="manufacturer-dropdown" style="display: none;"></div>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <label>List Price:</label>
+                        <input type="number" id="newProductPrice" step="0.01" placeholder="0.00" style="width: 120px;">
+                        <span style="margin-left: 10px;">USD</span>
+                    </div>
+                    <div class="form-row">
+                        <label>Unit of Measure:</label>
+                        <span style="color: #666; font-style: italic;">Each (EA) - default</span>
+                    </div>
+                    <div class="form-row">
+                        <label>Description:</label>
+                        <textarea id="newProductDescription" rows="3" style="width: 100%; max-width: 400px;" placeholder="Product description..."></textarea>
+                    </div>
+                    <div class="form-actions" style="margin-top: 15px;">
+                        <button type="button" onclick="createNewProduct()" class="button default" id="createProductButton">Create Product</button>
+                        <button type="button" onclick="cancelCreateProduct()" class="button">Cancel</button>
+                    </div>
+                </div>
+            </div>
+            
+            {# Selected Product Section #}
+            <div id="selectedProductSection" class="selected-product-section" style="display: none;">
+                <h4>Selected Product</h4>
+                <div id="selectedProductInfo" class="selected-product-info"></div>
+                
+                <div class="order-line-form">
+                    <div class="form-row">
+                        <label>Quantity:</label>
+                        <input type="number" id="lineQuantity" value="1" min="1" step="0.01" style="width: 100px;">
+                    </div>
+                    <div class="form-row">
+                        <label>Unit Price:</label>
+                        <input type="number" id="linePrice" step="0.01" style="width: 120px;" placeholder="0.00">
+                        <span style="margin-left: 10px; color: #666; font-size: 12px;">(Leave blank to use list price)</span>
+                    </div>
+                    <div class="form-row">
+                        <label>Description:</label>
+                        <textarea id="lineDescription" rows="3" style="width: 100%; max-width: 400px;" placeholder="Optional additional description..."></textarea>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button type="button" onclick="addOrderLine()" class="button default" id="addLineButton" disabled>Add Line to Order</button>
+            <button type="button" onclick="closeAddLineModal()" class="button">Cancel</button>
+        </div>
+    </div>
+</div>
+
+<style>
+.readonly-line-row td {
+    padding: 8px 12px;
+    vertical-align: middle;
+    background-color: #f8f9fa;
+}
+
+.readonly-line-row:nth-child(even) td {
+    background-color: #ffffff;
+}
+
+.readonly-line-row a {
+    color: #007bff;
+    text-decoration: none;
+}
+
+.readonly-line-row a:hover {
+    color: #0056b3;
+    text-decoration: underline;
+}
+
+.orderline-inline-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.orderline-inline-table th {
+    background-color: #f8f9fa;
+    border: 1px solid #dee2e6;
+    padding: 8px 12px;
+    text-align: left;
+    font-weight: bold;
+}
+
+.orderline-inline-table td {
+    border: 1px solid #dee2e6;
+}
+
+.line-number-col {
+    width: 80px;
+}
+
+.product-col {
+    width: 40%;
+}
+
+.quantity-col {
+    width: 80px;
+    text-align: right;
+}
+
+.price-col {
+    width: 100px;
+    text-align: right;
+}
+
+.total-col {
+    width: 120px;
+    text-align: right;
+}
+
+.product-info .product-name {
+    font-weight: bold;
+    color: #333;
+}
+
+.product-info .product-part-number {
+    font-size: 11px;
+    color: #666;
+    margin-top: 2px;
+}
+
+.charge-info {
+    color: #f39c12;
+    font-weight: bold;
+}
+
+.addlink-button:hover {
+    color: #205067 !important;
+}
+
+/* Modal Styles */
+.modal {
+    position: fixed;
+    z-index: 10000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    background-color: rgba(0,0,0,0.5);
+}
+
+.modal-content {
+    background-color: #fefefe;
+    margin: 5% auto;
+    border: 1px solid #888;
+    width: 90%;
+    max-width: 900px;
+    border-radius: 8px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+}
+
+.modal-header {
+    padding: 15px 20px;
+    background-color: #f8f9fa;
+    border-bottom: 1px solid #dee2e6;
+    border-radius: 8px 8px 0 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.modal-header h3 {
+    margin: 0;
+    color: #333;
+}
+
+.close {
+    color: #aaa;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+.close:hover {
+    color: #000;
+}
+
+.modal-body {
+    padding: 20px;
+    max-height: 70vh;
+    overflow-y: auto;
+}
+
+.modal-footer {
+    padding: 15px 20px;
+    background-color: #f8f9fa;
+    border-top: 1px solid #dee2e6;
+    border-radius: 0 0 8px 8px;
+    text-align: right;
+}
+
+.search-section {
+    margin-bottom: 20px;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 15px;
+}
+
+.search-filters {
+    margin-bottom: 15px;
+}
+
+.filter-row {
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.filter-row label {
+    font-weight: bold;
+    min-width: 80px;
+}
+
+.search-results {
+    max-height: 300px;
+    overflow-y: auto;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    background-color: #fff;
+}
+
+.product-result {
+    padding: 10px;
+    border-bottom: 1px solid #eee;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.product-result:hover {
+    background-color: #f8f9fa;
+}
+
+.product-result.selected {
+    background-color: #e3f2fd;
+    border-left: 4px solid #2196f3;
+}
+
+.product-result-name {
+    font-weight: bold;
+    color: #333;
+}
+
+.product-result-details {
+    font-size: 12px;
+    color: #666;
+    margin-top: 2px;
+}
+
+.selected-product-section {
+    margin-top: 20px;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 15px;
+    background-color: #f8fffe;
+}
+
+.selected-product-info {
+    background-color: #e8f5e8;
+    padding: 10px;
+    border-radius: 4px;
+    margin-bottom: 15px;
+}
+
+.order-line-form .form-row {
+    margin-bottom: 10px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.order-line-form label {
+    font-weight: bold;
+    min-width: 100px;
+}
+
+.button.default {
+    background-color: #417690;
+    color: white;
+}
+
+.button.default:hover {
+    background-color: #205067;
+}
+
+.button:disabled {
+    background-color: #ccc;
+    color: #999;
+    cursor: not-allowed;
+}
+
+.create-product-form {
+    margin-top: 20px;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 15px;
+    background-color: #f9fff9;
+}
+
+.form-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-start;
+}
+
+/* Manufacturer dropdown styles */
+.manufacturer-dropdown {
+    position: absolute;
+    background: white;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+    max-height: 200px;
+    overflow-y: auto;
+    z-index: 1000;
+    width: 250px;
+}
+
+.manufacturer-option {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid #eee;
+}
+
+.manufacturer-option:hover {
+    background-color: #f0f0f0;
+}
+
+.manufacturer-option:last-child {
+    border-bottom: none;
+}
+</style>
+
+<script>
+let selectedProduct = null;
+let currentOrderId = null;
+let currentDocumentType = null;
+let currentAppName = null;
+
+function openAddLineModal(orderId, documentType, appName) {
+    currentOrderId = orderId;
+    currentDocumentType = documentType;
+    currentAppName = appName;
+    selectedProduct = null;
+    document.getElementById('addLineModal').style.display = 'block';
+    document.getElementById('selectedProductSection').style.display = 'none';
+    document.getElementById('addLineButton').disabled = true;
+    clearForm();
+}
+
+function closeAddLineModal() {
+    document.getElementById('addLineModal').style.display = 'none';
+    selectedProduct = null;
+    currentOrderId = null;
+    currentDocumentType = null;
+    currentAppName = null;
+}
+
+function clearFilters() {
+    document.getElementById('productSearch').value = '';
+    document.getElementById('manufacturerFilter').value = '';
+    document.getElementById('dateFromFilter').value = '';
+    document.getElementById('dateToFilter').value = '';
+    document.getElementById('searchResults').innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">Enter search criteria and click Search to find products</p>';
+}
+
+function clearForm() {
+    document.getElementById('lineQuantity').value = '1';
+    document.getElementById('linePrice').value = '';
+    document.getElementById('lineDescription').value = '';
+}
+
+function searchProducts() {
+    const query = document.getElementById('productSearch').value.trim();
+    const manufacturer = document.getElementById('manufacturerFilter').value.trim();
+    const dateFrom = document.getElementById('dateFromFilter').value;
+    const dateTo = document.getElementById('dateToFilter').value;
+    
+    if (!query && !manufacturer && !dateFrom && !dateTo) {
+        alert('Please enter at least one search criteria');
+        return;
+    }
+    
+    const params = new URLSearchParams({
+        q: query,
+        manufacturer: manufacturer,
+        date_from: dateFrom,
+        date_to: dateTo,
+        limit: 100
+    });
+    
+    document.getElementById('searchResults').innerHTML = '<p style="text-align: center; padding: 20px;">Searching...</p>';
+    
+    // Use the app-specific URL
+    const searchUrl = `/${currentAppName}/ajax/search-products/?${params.toString()}`;
+    
+    fetch(searchUrl, {
+        method: 'GET',
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRFToken': getCsrfToken()
+        },
+        credentials: 'same-origin'
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            displaySearchResults(data.results);
+        } else {
+            document.getElementById('searchResults').innerHTML = `<p style="text-align: center; color: red; padding: 20px;">Error: ${data.error}</p>`;
+        }
+    })
+    .catch(error => {
+        console.error('Search error:', error);
+        document.getElementById('searchResults').innerHTML = `<p style="text-align: center; color: red; padding: 20px;">Network error: ${error.message}</p>`;
+    });
+}
+
+function displaySearchResults(results) {
+    const container = document.getElementById('searchResults');
+    
+    if (results.length === 0) {
+        container.innerHTML = '<p style="text-align: center; color: #666; padding: 20px;">No products found matching your criteria</p>';
+        return;
+    }
+    
+    let html = '';
+    results.forEach(product => {
+        html += `
+            <div class="product-result" onclick="selectProduct('${product.id}', '${escapeHtml(product.name)}', '${escapeHtml(product.part_number)}', '${escapeHtml(product.manufacturer)}', '${product.price}', '${product.currency}', '${escapeHtml(product.description)}')">
+                <div class="product-result-name">${product.name}</div>
+                <div class="product-result-details">
+                    Part #: ${product.part_number} | Manufacturer: ${product.manufacturer} | Price: $${product.price} ${product.currency}
+                    ${product.created_date ? ' | Created: ' + product.created_date : ''}
+                </div>
+            </div>
+        `;
+    });
+    
+    container.innerHTML = html;
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function selectProduct(id, name, partNumber, manufacturer, price, currency, description) {
+    selectedProduct = {
+        id: id,
+        name: name,
+        part_number: partNumber,
+        manufacturer: manufacturer,
+        price: price,
+        currency: currency,
+        description: description
+    };
+    
+    // Update selected product display
+    document.getElementById('selectedProductInfo').innerHTML = `
+        <strong>${name}</strong><br>
+        Part Number: ${partNumber}<br>
+        Manufacturer: ${manufacturer}<br>
+        List Price: $${price} ${currency}<br>
+        ${description ? 'Description: ' + description : ''}
+    `;
+    
+    // Set default price
+    document.getElementById('linePrice').value = price;
+    
+    // Show the order line form
+    document.getElementById('selectedProductSection').style.display = 'block';
+    document.getElementById('addLineButton').disabled = false;
+    
+    // Highlight selected product
+    document.querySelectorAll('.product-result').forEach(el => el.classList.remove('selected'));
+    event.target.closest('.product-result').classList.add('selected');
+}
+
+function addOrderLine() {
+    if (!selectedProduct || !currentOrderId) {
+        alert('Please select a product first');
+        return;
+    }
+    
+    const quantity = parseFloat(document.getElementById('lineQuantity').value) || 1;
+    const price = parseFloat(document.getElementById('linePrice').value) || null;
+    const description = document.getElementById('lineDescription').value.trim();
+    
+    const data = {
+        order_id: currentOrderId,
+        product_id: selectedProduct.id,
+        quantity: quantity,
+        price: price,
+        description: description
+    };
+    
+    // If it's a new product, include product data
+    if (selectedProduct.id.startsWith('new_')) {
+        data.product_data = {
+            name: selectedProduct.name,
+            part_number: selectedProduct.part_number,
+            manufacturer: selectedProduct.manufacturer,
+            price: selectedProduct.price,
+            description: selectedProduct.description
+        };
+    }
+    
+    document.getElementById('addLineButton').disabled = true;
+    document.getElementById('addLineButton').textContent = 'Adding...';
+    
+    // Use the app-specific URL
+    const addLineUrl = `/${currentAppName}/ajax/add-order-line/`;
+    
+    fetch(addLineUrl, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCsrfToken(),
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify(data)
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            alert(data.message);
+            closeAddLineModal();
+            // Reload the page to show the new line
+            window.location.reload();
+        } else {
+            alert('Error: ' + data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Add line error:', error);
+        alert('Network error occurred');
+    })
+    .finally(() => {
+        document.getElementById('addLineButton').disabled = false;
+        document.getElementById('addLineButton').textContent = 'Add Line to Order';
+    });
+}
+
+// Handle Enter key in search fields
+document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('productSearch').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            searchProducts();
+        }
+    });
+    
+    document.getElementById('manufacturerFilter').addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            searchProducts();
+        }
+    });
+});
+
+// Close modal when clicking outside
+window.addEventListener('click', function(event) {
+    const modal = document.getElementById('addLineModal');
+    if (event.target === modal) {
+        closeAddLineModal();
+    }
+});
+
+// Utility function to get CSRF token
+function getCsrfToken() {
+    const tokenElement = document.querySelector('[name=csrfmiddlewaretoken]');
+    if (tokenElement) {
+        return tokenElement.value;
+    }
+    // Fallback to cookie
+    const cookieValue = document.cookie
+        .split('; ')
+        .find(row => row.startsWith('csrftoken='))
+        ?.split('=')[1];
+    return cookieValue || '';
+}
+
+// Create New Product Functions
+function toggleCreateProductForm() {
+    const section = document.getElementById('createProductSection');
+    if (section.style.display === 'none') {
+        section.style.display = 'block';
+        loadManufacturers();
+        // Clear any selected product
+        document.getElementById('selectedProductSection').style.display = 'none';
+        document.getElementById('addLineButton').disabled = true;
+    } else {
+        section.style.display = 'none';
+    }
+}
+
+function cancelCreateProduct() {
+    document.getElementById('createProductSection').style.display = 'none';
+    clearCreateProductForm();
+}
+
+function clearCreateProductForm() {
+    document.getElementById('newProductName').value = '';
+    document.getElementById('newProductPartNumber').value = '';
+    document.getElementById('newProductManufacturer').value = '';
+    document.getElementById('newProductPrice').value = '';
+    document.getElementById('newProductDescription').value = '';
+}
+
+// Manufacturer search functionality
+let manufacturerSearchTimeout = null;
+let allManufacturers = [];
+
+function loadManufacturers() {
+    // Use app-specific manufacturer URL
+    const manufacturerUrl = `/${currentAppName}/ajax/get-manufacturers/?limit=1000`;
+    
+    fetch(manufacturerUrl, {
+        method: 'GET',
+        headers: {
+            'X-Requested-With': 'XMLHttpRequest',
+            'X-CSRFToken': getCsrfToken()
+        },
+        credentials: 'same-origin'
+    })
+    .then(response => {
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+        return response.json();
+    })
+    .then(data => {
+        if (data.success) {
+            allManufacturers = data.manufacturers;
+            console.log(`Loaded ${allManufacturers.length} manufacturers for search`);
+        } else {
+            throw new Error(data.error);
+        }
+    })
+    .catch(error => {
+        console.error('Load manufacturers error:', error);
+        // Fallback manufacturers
+        allManufacturers = [
+            {name: 'Generic'}, 
+            {name: 'Custom'}, 
+            {name: 'York'}, 
+            {name: 'Unknown'}
+        ];
+    });
+    
+    // Set up search functionality
+    setupManufacturerSearch();
+}
+
+function setupManufacturerSearch() {
+    const input = document.getElementById('newProductManufacturer');
+    const dropdown = document.getElementById('manufacturerDropdown');
+    
+    // Add input event listener for search
+    input.addEventListener('input', function() {
+        const query = this.value.trim().toLowerCase();
+        
+        // Clear previous timeout
+        if (manufacturerSearchTimeout) {
+            clearTimeout(manufacturerSearchTimeout);
+        }
+        
+        // Debounce search
+        manufacturerSearchTimeout = setTimeout(() => {
+            searchManufacturers(query);
+        }, 300);
+    });
+    
+    // Add focus event to show dropdown
+    input.addEventListener('focus', function() {
+        const query = this.value.trim().toLowerCase();
+        searchManufacturers(query);
+    });
+    
+    // Hide dropdown when clicking outside
+    document.addEventListener('click', function(event) {
+        if (!event.target.closest('#newProductManufacturer') && 
+            !event.target.closest('#manufacturerDropdown')) {
+            dropdown.style.display = 'none';
+        }
+    });
+}
+
+function searchManufacturers(query) {
+    const dropdown = document.getElementById('manufacturerDropdown');
+    
+    if (!query) {
+        // Show all manufacturers
+        const filteredManufacturers = allManufacturers.slice(0, 20); // Limit to 20
+        displayManufacturerOptions(filteredManufacturers);
+    } else {
+        // Filter manufacturers by query
+        const filteredManufacturers = allManufacturers.filter(manufacturer => 
+            manufacturer.name.toLowerCase().includes(query)
+        ).slice(0, 20); // Limit to 20 results
+        
+        displayManufacturerOptions(filteredManufacturers, query);
+    }
+    
+    dropdown.style.display = 'block';
+}
+
+function displayManufacturerOptions(manufacturers, query = '') {
+    const dropdown = document.getElementById('manufacturerDropdown');
+    let html = '';
+    
+    if (manufacturers.length === 0) {
+        html = `
+            <div class="manufacturer-option" onclick="selectManufacturer('${query || 'Custom'}')">
+                <strong>+ Create "${query || 'Custom'}"</strong>
+            </div>
+        `;
+    } else {
+        manufacturers.forEach(manufacturer => {
+            html += `
+                <div class="manufacturer-option" onclick="selectManufacturer('${manufacturer.name}')">
+                    ${manufacturer.name}
+                </div>
+            `;
+        });
+        
+        // Add option to create new if query doesn't match exactly
+        if (query && !manufacturers.some(m => m.name.toLowerCase() === query.toLowerCase())) {
+            html += `
+                <div class="manufacturer-option" onclick="selectManufacturer('${query}')" style="border-top: 1px solid #ddd;">
+                    <strong>+ Create "${query}"</strong>
+                </div>
+            `;
+        }
+    }
+    
+    dropdown.innerHTML = html;
+}
+
+function selectManufacturer(manufacturerName) {
+    const input = document.getElementById('newProductManufacturer');
+    const dropdown = document.getElementById('manufacturerDropdown');
+    
+    input.value = manufacturerName;
+    dropdown.style.display = 'none';
+}
+
+function createNewProduct() {
+    const name = document.getElementById('newProductName').value.trim();
+    const partNumber = document.getElementById('newProductPartNumber').value.trim();
+    const manufacturer = document.getElementById('newProductManufacturer').value.trim();
+    const price = parseFloat(document.getElementById('newProductPrice').value) || 0;
+    const description = document.getElementById('newProductDescription').value.trim();
+    
+    if (!name) {
+        alert('Product name is required');
+        return;
+    }
+    
+    const button = document.getElementById('createProductButton');
+    button.disabled = true;
+    button.textContent = 'Creating...';
+    
+    // For now, we'll simulate product creation and use it directly
+    // In a real implementation, you'd call a product creation endpoint
+    const newProduct = {
+        id: 'new_' + Date.now(), // Temporary ID
+        name: name,
+        part_number: partNumber || 'N/A',
+        manufacturer: manufacturer || 'Generic',
+        price: price.toFixed(2),
+        currency: 'USD',
+        description: description
+    };
+    
+    // Auto-select the new product
+    selectedProduct = newProduct;
+    
+    // Update selected product display
+    document.getElementById('selectedProductInfo').innerHTML = `
+        <strong>${name}</strong> <span style="color: #28a745;">(NEW PRODUCT)</span><br>
+        Part Number: ${partNumber || 'N/A'}<br>
+        Manufacturer: ${manufacturer || 'Generic'}<br>
+        List Price: $${price.toFixed(2)} USD<br>
+        ${description ? 'Description: ' + description : ''}
+        <br><br>
+        <em style="color: #666;">Note: This product will be created when the order line is added.</em>
+    `;
+    
+    // Set default price
+    document.getElementById('linePrice').value = price.toFixed(2);
+    
+    // Show the order line form and hide create form
+    document.getElementById('selectedProductSection').style.display = 'block';
+    document.getElementById('createProductSection').style.display = 'none';
+    document.getElementById('addLineButton').disabled = false;
+    
+    // Reset button
+    button.disabled = false;
+    button.textContent = 'Create Product';
+    
+    alert('Product prepared! Fill in quantity and click "Add Line to Order" to create both the product and order line.');
+}
+</script>
