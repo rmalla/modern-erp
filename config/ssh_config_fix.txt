@@ -1,0 +1,22 @@
+Host do_malla-erp
+  HostName 138.197.99.201
+  User root
+  Port 22
+  IdentityFile C:\Users\RMP\Keys\private.pem
+  ServerAliveInterval 30
+  ServerAliveCountMax 3
+  ConnectTimeout 10
+  TCPKeepAlive yes
+  # Better terminal settings
+  SetEnv TERM=xterm
+  RequestTTY force
+  # Disable problematic features
+  ForwardAgent no
+  ForwardX11 no
+  # Improve connection stability
+  Compression yes
+  ServerAliveInterval 60
+  ServerAliveCountMax 10
+  # Fix input/output issues
+  StdinNull no
+  BatchMode no 

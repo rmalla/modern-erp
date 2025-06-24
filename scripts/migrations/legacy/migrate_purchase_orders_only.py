@@ -152,7 +152,7 @@ def migrate_purchase_orders():
                 currency=default_currency,
                 price_list=default_price_list,
                 warehouse=default_warehouse,
-                # payment_terms=default_payment_terms,  # Skip payment_terms for now
+                payment_terms=default_payment_terms,  # Now should work with the null constraint fix
                 grand_total=Decimal(str(row[10])) if row[10] else Decimal('0.00'),
                 buyer=default_user,
                 created=row[12],

@@ -170,7 +170,8 @@ class SalesOrderAdmin(admin.ModelAdmin):
     search_fields = ('document_no', 'opportunity__opportunity_number', 'business_partner__name', 'description')
     date_hierarchy = 'date_ordered'
     inlines = [SalesOrderLineInline]
-    actions = ['create_combined_invoice']
+    actions = ['create_combined_invoice', 'reactivate_sales_orders']
+    autocomplete_fields = ['opportunity', 'business_partner']
     
     def print_order(self, obj):
         """Add print button in list view"""
@@ -504,10 +505,18 @@ class SalesOrderAdmin(admin.ModelAdmin):
             buttons.append(self._create_workflow_button(
                 'Start Processing', 'start_progress', obj.pk, 'blue'
             ))
+            # Add reactivate button for approved orders too
+            buttons.append(self._create_workflow_button(
+                'Reactivate', 'reactivate', obj.pk, 'orange'
+            ))
         
         elif current_state == 'in_progress':
             buttons.append(self._create_workflow_button(
                 'Mark Complete', 'complete', obj.pk, 'green'
+            ))
+            # Add reactivate button for in_progress orders too
+            buttons.append(self._create_workflow_button(
+                'Reactivate', 'reactivate', obj.pk, 'orange'
             ))
         
         elif current_state == 'complete':
@@ -516,6 +525,11 @@ class SalesOrderAdmin(admin.ModelAdmin):
             ))
             buttons.append(self._create_workflow_button(
                 'Close', 'close', obj.pk, 'gray'
+            ))
+        
+        elif current_state == 'closed':
+            buttons.append(self._create_workflow_button(
+                'Reactivate', 'reactivate', obj.pk, 'orange'
             ))
         
         elif current_state == 'rejected':
@@ -871,23 +885,46 @@ class SalesOrderAdmin(admin.ModelAdmin):
                 }
             
             elif action == 'reactivate':
-                # Reactivate completed order
+                # Reactivate order from various states
                 if not has_permission('reactivate_documents'):
                     return {'success': False, 'error': 'Insufficient permissions to reactivate orders'}
                 
-                if current_state != 'complete':
-                    return {'success': False, 'error': 'Can only reactivate completed orders'}
+                if current_state not in ['approved', 'in_progress', 'complete', 'closed']:
+                    return {'success': False, 'error': 'Can only reactivate approved, in-progress, completed or closed orders'}
                 
-                progress_state = WorkflowState.objects.get(
-                    workflow=workflow.workflow_definition, 
-                    name='in_progress'
-                )
-                workflow.current_state = progress_state
+                # Determine target state based on current state
+                if current_state in ['approved', 'in_progress']:
+                    # From approved or in_progress, go back to draft for full editing
+                    target_state = WorkflowState.objects.get(
+                        workflow=workflow.workflow_definition, 
+                        name='draft'
+                    )
+                else:
+                    # From complete/closed, go to in_progress
+                    target_state = WorkflowState.objects.get(
+                        workflow=workflow.workflow_definition, 
+                        name='in_progress'
+                    )
+                
+                workflow.current_state = target_state
                 workflow.save()
                 
+                # Add audit comment
+                from core.models import WorkflowApproval
+                WorkflowApproval.objects.create(
+                    document_workflow=workflow,
+                    requested_by=user,
+                    approver=user,
+                    status='approved',
+                    comments=f'Order reactivated from {current_state} state by {user.get_full_name() or user.username}',
+                    requested_at=timezone.now(),
+                    responded_at=timezone.now()
+                )
+                
+                target_state_name = 'draft' if current_state in ['approved', 'in_progress'] else 'in-progress'
                 return {
                     'success': True,
-                    'message': 'Order reactivated'
+                    'message': f'Order reactivated from {current_state} state and moved to {target_state_name}'
                 }
             
             elif action == 'return_draft':
@@ -983,6 +1020,43 @@ class SalesOrderAdmin(admin.ModelAdmin):
             messages.error(request, f'Error creating combined invoice: {str(e)}')
     
     create_combined_invoice.short_description = "Create combined invoice from selected orders"
+    
+    def reactivate_sales_orders(self, request, queryset):
+        """Reactivate selected completed or closed sales orders"""
+        reactivated_count = 0
+        skipped_count = 0
+        error_count = 0
+        
+        for order in queryset:
+            try:
+                if order.can_reactivate():
+                    result_message = order.reactivate(user=request.user)
+                    reactivated_count += 1
+                    self.message_user(request, f"✓ {result_message}", level=messages.SUCCESS)
+                else:
+                    skipped_count += 1
+                    self.message_user(
+                        request, 
+                        f"⚠ Order {order.document_no} cannot be reactivated (status: {order.doc_status})", 
+                        level=messages.WARNING
+                    )
+            except Exception as e:
+                error_count += 1
+                self.message_user(
+                    request, 
+                    f"❌ Error reactivating order {order.document_no}: {str(e)}", 
+                    level=messages.ERROR
+                )
+        
+        # Summary message
+        if reactivated_count > 0:
+            self.message_user(
+                request,
+                f"Reactivation complete: {reactivated_count} orders reactivated, {skipped_count} skipped, {error_count} errors",
+                level=messages.INFO
+            )
+    
+    reactivate_sales_orders.short_description = "Reactivate selected completed/closed orders"
 
 
 @admin.register(models.SalesOrderLine)
@@ -1028,6 +1102,7 @@ class InvoiceAdmin(admin.ModelAdmin):
     search_fields = ('document_no', 'opportunity__opportunity_number', 'business_partner__name', 'description')
     date_hierarchy = 'date_invoiced'
     inlines = [InvoiceLineInline]
+    autocomplete_fields = ['opportunity', 'business_partner', 'sales_order']
     
     fieldsets = (
         ('Document Information', {
@@ -1413,6 +1488,7 @@ class ShipmentAdmin(admin.ModelAdmin):
     search_fields = ('document_no', 'opportunity__opportunity_number', 'business_partner__name', 'description', 'tracking_no')
     date_hierarchy = 'movement_date'
     inlines = [ShipmentLineInline]
+    autocomplete_fields = ['opportunity', 'business_partner']
     
     fieldsets = (
         ('Document Information', {

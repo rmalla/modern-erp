@@ -73,6 +73,7 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     search_fields = ('document_no', 'opportunity__opportunity_number', 'business_partner__name', 'vendor_reference', 'description')
     date_hierarchy = 'date_ordered'
     inlines = [PurchaseOrderLineInline]
+    autocomplete_fields = ['opportunity', 'business_partner']
     
     fieldsets = (
         ('Purchase Order Header', {
