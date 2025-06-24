@@ -6,6 +6,8 @@ User-friendly views for managing the sales process:
 - Sales order management with status tracking
 - Multi-vendor PO generation
 - Combined shipping/invoicing
+
+Updated: 2025-06-24 12:30 - Column width adjustments and header line color fix
 """
 
 from django.shortcuts import render, get_object_or_404, redirect
@@ -469,6 +471,8 @@ def sales_order_pdf(request, order_id):
         pagesize=letter, 
         topMargin=0.5*inch, 
         bottomMargin=0.75*inch,
+        leftMargin=0.5*inch,
+        rightMargin=0.5*inch,
         title=f"Sales Order {order.document_no}",
         author="Malla Group LLC"
     )
@@ -566,7 +570,7 @@ def sales_order_pdf(request, order_id):
     
     # Build header data starting with core fields
     header_data = [
-        ['Order Number:', order.document_no, 'Date:', order.date_ordered.strftime('%Y-%m-%d') if order.date_ordered else ''],
+        ['Order Number:', f'SO #{order.document_no}', 'Date:', order.date_ordered.strftime('%Y-%m-%d') if order.date_ordered else ''],
         ['Customer:', order.business_partner.name if order.business_partner else '', 'Customer PO:', order.customer_po_reference or ''],
         ['Customer Contact:', customer_contact_info, '', ''],
         ['Malla Contact:', malla_contact_info, '', ''],
@@ -631,43 +635,76 @@ def sales_order_pdf(request, order_id):
         ]))
         elements.append(address_table)
     
-    elements.append(Spacer(1, 0.2*inch))
+    elements.append(Spacer(1, 0.1*inch))
     
-    # Order lines
-    elements.append(Paragraph("Order Details", heading_style))
+    # Order lines (removed "Order Details" title to move table higher)
     
-    # Table header
-    line_data = [['Line', 'Product', 'Description', 'Qty', 'UOM', 'Unit Price', 'Discount', 'Total']]
+    # Table header - Removed Description column, fixed layout
+    line_data = [['Line', 'Product', 'Manufacturer', 'Part Number', 'Qty', 'UOM', 'Unit Price', 'Total']]
     
     # Add order lines
     order_lines = order.lines.all().order_by('line_no')
     if order_lines.exists():
         for line in order_lines:
-            product_info = ''
+            # Extract product information
+            product_name = ''
+            manufacturer_name = ''
+            part_number = ''
+            
             if line.product:
-                product_info = f"{line.product.manufacturer_part_number}\n{line.product.name}"
+                product_name = line.product.name or ''
+                manufacturer_name = line.product.manufacturer.name if line.product.manufacturer else ''
+                part_number = line.product.manufacturer_part_number or ''
             elif line.charge:
-                product_info = line.charge.name
+                product_name = line.charge.name
+                manufacturer_name = ''
+                part_number = ''
             
             line_data.append([
                 str(line.line_no),
-                product_info,
-                line.description or '',
+                product_name,
+                manufacturer_name,
+                part_number,
                 f"{line.quantity_ordered:,.2f}",
                 line.product.uom.code if line.product and line.product.uom else '',
                 f"${line.price_entered.amount:,.2f}" if line.price_entered else '',
-                f"{line.discount}%" if line.discount else '',
                 f"${line.line_net_amount.amount:,.2f}" if line.line_net_amount else ''
             ])
     else:
-        # Add a row indicating no items
+        # Add a row indicating no items (8 columns now)
         line_data.append(['', 'No line items found', '', '', '', '', '', ''])
     
-    # New column widths to fill 7.5 inches exactly
-    invoice_col_widths = [0.28*inch, 2.0*inch, 0.78*inch, 0.89*inch, 1.11*inch, 0.44*inch, 0.33*inch, 0.78*inch, 0.89*inch]
+    # Updated column widths for 8 columns to fill full document width (8.0 inches total)
+    # Line, Product, Manufacturer, Part Number, Qty, UOM, Unit Price, Total
+    invoice_col_widths = [0.5*inch, 2.2*inch, 1.4*inch, 1.2*inch, 0.6*inch, 0.5*inch, 0.8*inch, 0.8*inch]
 
-    # Create table with optimized column widths (9 columns, fits in 7.5" content area)
-    line_table = Table(line_data, colWidths=invoice_col_widths, hAlign='LEFT')
+    # Create table with optimized column widths (8 columns, fits in 8.0" content area)
+    # Use Paragraph objects for text wrapping to prevent overflow
+    
+    # Convert text fields to Paragraph objects to prevent overflow
+    processed_line_data = []
+    for i, row in enumerate(line_data):
+        if i == 0:  # Header row
+            processed_line_data.append(row)
+        else:
+            # Convert product name and manufacturer to Paragraph objects for wrapping
+            product_para = Paragraph(str(row[1]), styles['Normal']) if row[1] else ''
+            manufacturer_para = Paragraph(str(row[2]), styles['Normal']) if row[2] else ''
+            part_number_para = Paragraph(str(row[3]), styles['Normal']) if row[3] else ''
+            
+            processed_row = [
+                row[0],  # Line number
+                product_para,  # Product (wrapped)
+                manufacturer_para,  # Manufacturer (wrapped)
+                part_number_para,  # Part Number (wrapped)
+                row[4],  # Qty
+                row[5],  # UOM
+                row[6],  # Unit Price
+                row[7],  # Total
+            ]
+            processed_line_data.append(processed_row)
+    
+    line_table = Table(processed_line_data, colWidths=invoice_col_widths)
     
     # Apply table style
     line_table.setStyle(TableStyle([
@@ -682,40 +719,52 @@ def sales_order_pdf(request, order_id):
         ('FONT', (0, 1), (-1, -1), 'Helvetica'),
         ('FONTSIZE', (0, 1), (-1, -1), 9),
         ('VALIGN', (0, 1), (-1, -1), 'TOP'),
-        ('ALIGN', (3, 1), (3, -1), 'RIGHT'),  # Qty
-        ('ALIGN', (5, 1), (5, -1), 'RIGHT'),  # Unit Price
-        ('ALIGN', (6, 1), (6, -1), 'RIGHT'),  # Discount
+        ('ALIGN', (4, 1), (4, -1), 'RIGHT'),  # Qty
+        ('ALIGN', (6, 1), (6, -1), 'RIGHT'),  # Unit Price
         ('ALIGN', (7, 1), (7, -1), 'RIGHT'),  # Total
         
         # Grid
         ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-        ('LINEBELOW', (0, 0), (-1, 0), 2, colors.HexColor('#1a5490')),
+        ('LINEBELOW', (0, 0), (-1, 0), 0.5, colors.grey),
         
         # Alternating row colors
         ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.HexColor('#f0f0f0')]),
+        
+        # Add padding inside cells
+        ('LEFTPADDING', (0, 0), (-1, -1), 4),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 4),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+        ('ALIGN', (0, 0), (3, -1), 'LEFT'),  # Force left align for first 4 columns
     ]))
     
-    elements.append(line_table)
+    # Wrap table in a left-aligned container
+    from reportlab.platypus import KeepTogether
+    table_container = KeepTogether([line_table])
+    elements.append(table_container)
     elements.append(Spacer(1, 0.2*inch))
     
-    # Totals
+    # Totals - align with the new 8-column structure
     totals_data = []
     if order.total_lines:
-        totals_data.append(['Subtotal:', f"${order.total_lines.amount:,.2f}"])
+        totals_data.append(['', '', '', '', '', '', 'Subtotal:', f"${order.total_lines.amount:,.2f}"])
     if hasattr(order, 'tax_amount') and order.tax_amount:
-        totals_data.append(['Tax:', f"${order.tax_amount.amount:,.2f}"])
+        totals_data.append(['', '', '', '', '', '', 'Tax:', f"${order.tax_amount.amount:,.2f}"])
     if order.grand_total:
-        totals_data.append(['Total:', f"${order.grand_total.amount:,.2f}"])
+        totals_data.append(['', '', '', '', '', '', 'Total:', f"${order.grand_total.amount:,.2f}"])
     
     if totals_data:
         totals_table = Table(totals_data, colWidths=invoice_col_widths)
         totals_table.setStyle(TableStyle([
-            ('ALIGN', (0, 0), (0, -1), 'RIGHT'),
-            ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-            ('FONT', (0, -1), (-1, -1), 'Helvetica-Bold'),
-            ('FONTSIZE', (0, 0), (-1, -1), 11),
-            ('LINEABOVE', (0, -1), (-1, -1), 2, colors.HexColor('#1a5490')),
-            ('TOPPADDING', (0, -1), (-1, -1), 10),
+            ('ALIGN', (6, 0), (6, -1), 'RIGHT'),  # Labels aligned right
+            ('ALIGN', (7, 0), (7, -1), 'RIGHT'),  # Values aligned right
+            ('FONT', (6, -1), (-1, -1), 'Helvetica-Bold'),  # Bold total line
+            ('FONTSIZE', (6, 0), (-1, -1), 11),
+            ('LINEABOVE', (6, -1), (-1, -1), 2, colors.HexColor('#1a5490')),
+            ('TOPPADDING', (6, -1), (-1, -1), 10),
+            # Add padding to totals section
+            ('LEFTPADDING', (6, 0), (-1, -1), 4),
+            ('RIGHTPADDING', (6, 0), (-1, -1), 4),
         ]))
         elements.append(totals_table)
     
@@ -1049,7 +1098,7 @@ def invoice_pdf(request, invoice_id):
     elements.append(Paragraph("Invoice Details", heading_style))
     
     # New column widths for 8 columns (no Description), total 7.5 inches
-    invoice_col_widths = [0.35*inch, 2.3*inch, 1.0*inch, 1.1*inch, 0.6*inch, 0.45*inch, 0.85*inch, 0.85*inch]
+    invoice_col_widths = [0.35*inch, 2.3*inch, 1.0*inch, 1.1*inch, 0.6*inch, 0.45*inch, 0.65*inch, 1.05*inch]
 
     # Table header - Remove Description column
     line_data = [['Line', 'Product', 'Manufacturer', 'Part Number', 'Qty', 'UOM', 'Unit Price', 'Total']]

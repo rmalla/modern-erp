@@ -17,7 +17,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.environ.get('SECRET_KEY', 'django-insecure-change-this-in-production')
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+DEBUG = True  # Force debug mode to disable all caching during development
 
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost').split(',')
 
@@ -50,7 +50,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'corsheaders.middleware.CorsMiddleware',
-    'django.middleware.cache.UpdateCacheMiddleware',  # Cache middleware first
+    # 'django.middleware.cache.UpdateCacheMiddleware',  # Cache middleware disabled for development
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -59,7 +59,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
-    'django.middleware.cache.FetchFromCacheMiddleware',  # Cache middleware last
+    # 'django.middleware.cache.FetchFromCacheMiddleware',  # Cache middleware disabled for development
 ]
 
 ROOT_URLCONF = 'modern_erp.urls'
@@ -76,6 +76,7 @@ TEMPLATES = [
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
             ],
+            'debug': True,  # Disable template caching
         },
     },
 ]
@@ -94,55 +95,59 @@ DATABASES = {
     }
 }
 
-# Redis Cache Configuration
+# Redis Cache Configuration (disabled for development)
 CACHES = {
     'default': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/1'),
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'CONNECTION_POOL_KWARGS': {
-                'max_connections': 50,
-                'retry_on_timeout': True,
-            },
-            'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
-            'IGNORE_EXCEPTIONS': True,
-        },
-        'KEY_PREFIX': 'modern_erp',
-        'VERSION': 1,
-        'TIMEOUT': 300,  # 5 minutes default
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+        # 'BACKEND': 'django_redis.cache.RedisCache',
+        # 'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/1'),
+        # 'OPTIONS': {
+        #     'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        #     'CONNECTION_POOL_KWARGS': {
+        #         'max_connections': 50,
+        #         'retry_on_timeout': True,
+        #     },
+        #     'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+        #     'IGNORE_EXCEPTIONS': True,
+        # },
+        # 'KEY_PREFIX': 'modern_erp',
+        # 'VERSION': 1,
+        # 'TIMEOUT': 300,  # 5 minutes default
     },
-    # Separate cache for sessions
+    # Separate cache for sessions (disabled for development)
     'sessions': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/2'),
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'CONNECTION_POOL_KWARGS': {
-                'max_connections': 20,
-            },
-        },
-        'KEY_PREFIX': 'modern_erp_sessions',
-        'TIMEOUT': 86400,  # 24 hours for sessions
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+        # 'BACKEND': 'django_redis.cache.RedisCache',
+        # 'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/2'),
+        # 'OPTIONS': {
+        #     'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        #     'CONNECTION_POOL_KWARGS': {
+        #         'max_connections': 20,
+        #     },
+        # },
+        # 'KEY_PREFIX': 'modern_erp_sessions',
+        # 'TIMEOUT': 86400,  # 24 hours for sessions
     },
-    # Long-term cache for static data
+    # Long-term cache for static data (disabled for development)
     'static_data': {
-        'BACKEND': 'django_redis.cache.RedisCache',
-        'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/3'),
-        'OPTIONS': {
-            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-            'CONNECTION_POOL_KWARGS': {
-                'max_connections': 10,
-            },
-        },
-        'KEY_PREFIX': 'modern_erp_static',
-        'TIMEOUT': 3600,  # 1 hour for static data
+        'BACKEND': 'django.core.cache.backends.dummy.DummyCache',
+        # 'BACKEND': 'django_redis.cache.RedisCache',
+        # 'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/3'),
+        # 'OPTIONS': {
+        #     'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+        #     'CONNECTION_POOL_KWARGS': {
+        #         'max_connections': 10,
+        #     },
+        # },
+        # 'KEY_PREFIX': 'modern_erp_static',
+        # 'TIMEOUT': 3600,  # 1 hour for static data
     }
 }
 
-# Use Redis for sessions
-SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
-SESSION_CACHE_ALIAS = 'sessions'
+# Use database for sessions (cache disabled for development)
+SESSION_ENGINE = 'django.contrib.sessions.backends.db'
+# SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+# SESSION_CACHE_ALIAS = 'sessions'
 SESSION_COOKIE_AGE = 86400  # 24 hours
 SESSION_SAVE_EVERY_REQUEST = False
 
