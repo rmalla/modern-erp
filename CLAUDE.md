@@ -354,3 +354,45 @@ The system now features a unified template system for product selection across a
 - **Address Display**: Use `full_address` or `full_address_with_name` methods
 - **Money Fields**: django-money handles currency and amount attributes automatically
 - **Foreign Key Defaults**: Use callable functions for dynamic defaults
+
+### Pricing System Architecture
+
+The system implements a dual pricing model with clear separation between sales and purchasing:
+
+#### **Core Pricing Fields (Product Model)**
+```python
+# Sales price for customer transactions
+list_price = MoneyField(verbose_name="Price")
+
+# Cost price for vendor transactions  
+standard_cost = MoneyField(verbose_name="Cost")
+```
+
+#### **Context-Aware Pricing Logic**
+- **Sales Orders**: AJAX endpoints return `product.list_price.amount`
+- **Purchase Orders**: AJAX endpoints return `product.standard_cost.amount`
+- **Price Lists**: Support both sales and purchase price list types
+- **Multi-Currency**: All pricing uses django-money for proper currency handling
+
+#### **Totals Calculation Pattern**
+Both SalesOrder and PurchaseOrder models implement `calculate_totals()` method:
+```python
+def calculate_totals(self):
+    total_lines_amount = sum(line.line_net_amount.amount for line in self.lines.all() if line.line_net_amount)
+    self.total_lines = Money(total_lines_amount, 'USD')
+    self.grand_total = self.total_lines
+    self.save()
+```
+
+#### **Line Item Pricing Flow**
+1. Get default price from appropriate product field (list_price vs standard_cost)
+2. Allow manual override via `price_entered`
+3. Copy to `price_actual` for processing
+4. Calculate `line_net_amount = quantity * price_actual`
+5. Trigger automatic totals recalculation
+
+#### **Key Pricing Files**
+- **Product Pricing**: `inventory/models.py:79-81`
+- **Sales AJAX**: `sales/views.py:1701-1702` 
+- **Purchase AJAX**: `purchasing/views.py:480-481`
+- **Totals Calculation**: `*/models.py` in `calculate_totals()` methods

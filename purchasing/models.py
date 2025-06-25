@@ -79,7 +79,6 @@ class PurchaseOrder(BaseModel):
     
     # Dates
     date_ordered = models.DateField(default=get_today_date)
-    date_promised = models.DateField(null=True, blank=True)
     date_received = models.DateField(null=True, blank=True)
     
     # Vendor and contact information
@@ -108,9 +107,6 @@ class PurchaseOrder(BaseModel):
                                         null=True, blank=True, related_name='purchase_orders_ship_to',
                                         help_text="Shipping address (filtered by ship-to customer)")
     
-    # Legacy address fields (for backward compatibility)
-    bill_to_address = models.TextField(blank=True, help_text="Legacy billing address text")
-    ship_to_address = models.TextField(blank=True, help_text="Legacy shipping address text")
     
     # Opportunity tracking
     opportunity = models.ForeignKey(Opportunity, on_delete=models.SET_NULL, null=True, blank=True,
@@ -140,7 +136,6 @@ class PurchaseOrder(BaseModel):
     buyer = models.ForeignKey('core.User', on_delete=models.SET_NULL, null=True, blank=True)
     
     # Flags
-    is_printed = models.BooleanField(default=False)
     is_received = models.BooleanField(default=False)
     is_invoiced = models.BooleanField(default=False)
     is_drop_ship = models.BooleanField(default=False)
@@ -286,6 +281,21 @@ class PurchaseOrder(BaseModel):
         self.save()
         
         return f"Purchase order {self.document_no} reactivated from '{original_status}' to 'in_progress'"
+    
+    def calculate_totals(self):
+        """Calculate and update order totals from line items"""
+        from djmoney.money import Money
+        
+        total_lines_amount = 0
+        for line in self.lines.all():
+            if line.line_net_amount:
+                total_lines_amount += line.line_net_amount.amount
+        
+        self.total_lines = Money(total_lines_amount, 'USD')
+        self.grand_total = self.total_lines  # For now, same as total_lines (no tax)
+        self.save()
+        
+        return self.grand_total
 
 
 class PurchaseOrderLine(BaseModel):
@@ -345,10 +355,14 @@ class PurchaseOrderLine(BaseModel):
         if self.quantity_ordered and self.price_entered:
             from djmoney.money import Money
             self.line_net_amount = Money(
-                self.quantity_ordered * self.price_entered.amount,
+                float(self.quantity_ordered) * float(self.price_entered.amount),
                 self.price_entered.currency
             )
         super().save(*args, **kwargs)
+        
+        # Recalculate order totals after saving the line
+        if self.order:
+            self.order.calculate_totals()
 
 
 class VendorBill(BaseModel):

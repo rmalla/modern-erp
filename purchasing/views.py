@@ -477,8 +477,8 @@ def ajax_search_products(request):
                 'name': product.name,
                 'part_number': product.manufacturer_part_number or 'N/A',
                 'manufacturer': product.manufacturer.name if product.manufacturer else 'N/A',
-                'price': str(product.list_price.amount) if product.list_price else '0.00',
-                'currency': product.list_price.currency.code if product.list_price else 'USD',
+                'price': str(product.standard_cost.amount) if product.standard_cost else '0.00',
+                'currency': product.standard_cost.currency.code if product.standard_cost else 'USD',
                 'description': product.description or '',
                 'created_date': product.created.strftime('%Y-%m-%d') if product.created else None
             })
@@ -568,7 +568,7 @@ def ajax_add_order_line(request):
                 manufacturer_part_number=product_data.get('part_number', ''),
                 manufacturer=manufacturer,
                 uom=uom,
-                list_price=Money(float(product_data.get('price', 0)), 'USD'),
+                standard_cost=Money(float(product_data.get('price', 0)), 'USD'),
                 description=product_data.get('description', ''),
                 is_active=True,
                 organization=order.organization
@@ -586,11 +586,11 @@ def ajax_add_order_line(request):
         # Create order line
         from djmoney.money import Money
         
-        # Use provided price or default to product list price
+        # Use provided price or default to product standard cost (for purchasing)
         if price is not None:
             line_price = Money(float(price), 'USD')
         else:
-            line_price = product.list_price or Money(0, 'USD')
+            line_price = product.standard_cost or Money(0, 'USD')
         
         # Calculate line total
         line_total = Money(float(quantity) * float(line_price.amount), 'USD')
