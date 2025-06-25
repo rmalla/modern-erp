@@ -91,6 +91,15 @@ class PurchaseOrderLineInline(admin.TabularInline):
     verbose_name_plural = "Purchase Order Lines"
     template = 'admin/purchasing/purchaseorderline_inline.html'  # Custom template
     
+    def get_queryset(self, request):
+        """Optimize inline queryset"""
+        queryset = super().get_queryset(request)
+        return queryset.select_related(
+            'product',
+            'product__manufacturer',
+            'charge'
+        )
+    
     def get_fields(self, request, obj=None):
         """Return the readonly fields for display"""
         return self.readonly_fields
@@ -175,6 +184,30 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
     date_hierarchy = 'date_ordered'
     inlines = [PurchaseOrderLineInline]
     autocomplete_fields = ['opportunity', 'business_partner', 'ship_to_customer']
+    
+    # Performance optimizations
+    list_per_page = 25  # Smaller page size for better performance
+    list_max_show_all = 50
+    
+    def get_queryset(self, request):
+        """Optimize main queryset for list view"""
+        queryset = super().get_queryset(request)
+        return queryset.select_related(
+            'business_partner',
+            'opportunity', 
+            'organization',
+            'currency',
+            'warehouse'
+        ).prefetch_related(
+            'lines'  # Only prefetch lines for inline display
+        )
+    
+    def get_inlines(self, request, obj):
+        """Only show inlines when editing existing objects"""
+        if obj:  # Editing existing object
+            return self.inlines
+        else:  # Adding new object
+            return []  # Don't show inlines on add form for better performance
     
     def get_changeform_initial_data(self, request):
         """Set initial data for the change form (when adding new purchase orders)"""
@@ -824,9 +857,91 @@ class PurchaseOrderAdmin(admin.ModelAdmin):
 
 @admin.register(models.PurchaseOrderLine)
 class PurchaseOrderLineAdmin(admin.ModelAdmin):
-    list_display = ('order', 'line_no', 'product', 'charge', 'quantity_ordered', 'price_actual', 'line_net_amount')
+    list_display = ('order', 'line_no', 'product', 'charge', 'quantity_ordered', 'price_entered', 'line_net_amount')
     list_filter = ('order__organization', 'product__manufacturer')
     search_fields = ('order__document_no', 'product__manufacturer_part_number', 'product__name', 'vendor_product_no', 'description')
+    readonly_fields = (
+        'created', 'updated', 'created_by', 'updated_by', 'legacy_id',
+        'quantity_received', 'quantity_invoiced', 'line_net_amount',
+        'order_display', 'date_received'
+    )
+    
+    # Performance optimizations
+    list_per_page = 50  # Limit number of items per page
+    list_max_show_all = 100  # Limit "show all" functionality
+    
+    def get_queryset(self, request):
+        """Optimize queryset with select_related for better performance"""
+        queryset = super().get_queryset(request)
+        # Use select_related but remove only() to avoid field access issues
+        return queryset.select_related(
+            'order',
+            'order__business_partner', 
+            'order__organization',
+            'product',
+            'product__manufacturer',
+            'charge',
+            'tax',
+            'created_by',
+            'updated_by',
+            'source_sales_order',
+            'source_sales_order_line'
+        )
+    
+    fieldsets = (
+        ('Order Information', {
+            'fields': ('order_display', 'line_no', 'description')
+        }),
+        ('Product/Charge', {
+            'fields': ('product', 'charge', 'vendor_product_no')
+        }),
+        ('Quantities', {
+            'fields': ('quantity_ordered', 'quantity_received', 'quantity_invoiced'),
+            'description': 'Received and invoiced quantities are managed by the workflow system'
+        }),
+        ('Pricing', {
+            'fields': ('price_entered', 'line_net_amount'),
+            'description': 'Use price_entered for the unit price. Other price fields and discount are deprecated.'
+        }),
+        ('Tax', {
+            'fields': ('tax', 'tax_amount')
+        }),
+        ('Source Tracking', {
+            'fields': ('source_sales_order', 'source_sales_order_line')
+        }),
+        ('Dates', {
+            'fields': ('date_promised', 'date_received'),
+            'description': 'Date received is managed by the workflow system'
+        }),
+        ('System Information', {
+            'fields': ('created', 'updated', 'created_by', 'updated_by', 'legacy_id'),
+            'classes': ('collapse',),
+            'description': 'System-managed audit information'
+        })
+    )
+    
+    def order_display(self, obj):
+        """Display purchase order as readonly text"""
+        if obj.order:
+            return f"Purchase Order: {obj.order}"
+        return "-"
+    order_display.short_description = "Purchase Order"
+    
+    def save_model(self, request, obj, form, change):
+        """Auto-populate created_by and updated_by fields, calculate line amount"""
+        if not change:  # Creating new object
+            obj.created_by = request.user
+        obj.updated_by = request.user
+        
+        # Auto-calculate line_net_amount
+        if obj.quantity_ordered and obj.price_entered:
+            from djmoney.money import Money
+            obj.line_net_amount = Money(
+                obj.quantity_ordered * obj.price_entered.amount,
+                obj.price_entered.currency
+            )
+        
+        super().save_model(request, obj, form, change)
 
 
 class VendorBillLineInline(admin.TabularInline):

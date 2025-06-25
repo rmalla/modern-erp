@@ -144,6 +144,9 @@ class BusinessPartner(BaseModel):
     # 1099 reporting (US specific)
     is_1099_vendor = models.BooleanField(default=False, help_text="Subject to 1099 reporting")
     
+    # Data quality flag
+    is_orphan = models.BooleanField(default=False, help_text="Business partner with no locations or related documents - candidate for deletion")
+    
     class Meta:
         ordering = ['name']
         

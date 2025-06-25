@@ -339,6 +339,16 @@ class PurchaseOrderLine(BaseModel):
     def __str__(self):
         product_name = self.product.name if self.product else self.charge.name if self.charge else 'N/A'
         return f"{self.order.document_no} - Line {self.line_no}: {product_name}"
+    
+    def save(self, *args, **kwargs):
+        """Auto-calculate line_net_amount before saving"""
+        if self.quantity_ordered and self.price_entered:
+            from djmoney.money import Money
+            self.line_net_amount = Money(
+                self.quantity_ordered * self.price_entered.amount,
+                self.price_entered.currency
+            )
+        super().save(*args, **kwargs)
 
 
 class VendorBill(BaseModel):

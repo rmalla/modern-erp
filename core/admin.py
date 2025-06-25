@@ -4,7 +4,115 @@ Django admin configuration for core models.
 
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
+from django.db.models import Count
 from . import models
+
+
+# Custom filters for document counts
+class HasSalesOrdersFilter(admin.SimpleListFilter):
+    title = 'has sales orders'
+    parameter_name = 'has_sales_orders'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('yes', 'Has sales orders (> 0)'),
+            ('no', 'No sales orders (= 0)'),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == 'yes':
+            return queryset.annotate(sales_count=Count('salesorder')).filter(sales_count__gt=0)
+        if self.value() == 'no':
+            return queryset.annotate(sales_count=Count('salesorder')).filter(sales_count=0)
+
+
+class HasPurchaseOrdersFilter(admin.SimpleListFilter):
+    title = 'has purchase orders'
+    parameter_name = 'has_purchase_orders'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('yes', 'Has purchase orders (> 0)'),
+            ('no', 'No purchase orders (= 0)'),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == 'yes':
+            return queryset.annotate(po_count=Count('purchaseorder')).filter(po_count__gt=0)
+        if self.value() == 'no':
+            return queryset.annotate(po_count=Count('purchaseorder')).filter(po_count=0)
+
+
+class HasInvoicesFilter(admin.SimpleListFilter):
+    title = 'has invoices'
+    parameter_name = 'has_invoices'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('yes', 'Has invoices (> 0)'),
+            ('no', 'No invoices (= 0)'),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == 'yes':
+            return queryset.annotate(inv_count=Count('invoice')).filter(inv_count__gt=0)
+        if self.value() == 'no':
+            return queryset.annotate(inv_count=Count('invoice')).filter(inv_count=0)
+
+
+class HasVendorBillsFilter(admin.SimpleListFilter):
+    title = 'has vendor bills'
+    parameter_name = 'has_vendor_bills'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('yes', 'Has vendor bills (> 0)'),
+            ('no', 'No vendor bills (= 0)'),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == 'yes':
+            return queryset.annotate(vb_count=Count('vendorbill')).filter(vb_count__gt=0)
+        if self.value() == 'no':
+            return queryset.annotate(vb_count=Count('vendorbill')).filter(vb_count=0)
+
+
+class HasReceiptsFilter(admin.SimpleListFilter):
+    title = 'has receipts'
+    parameter_name = 'has_receipts'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('yes', 'Has receipts (> 0)'),
+            ('no', 'No receipts (= 0)'),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == 'yes':
+            return queryset.annotate(receipt_count=Count('receipt')).filter(receipt_count__gt=0)
+        if self.value() == 'no':
+            return queryset.annotate(receipt_count=Count('receipt')).filter(receipt_count=0)
+
+
+class HasAnyDocumentsFilter(admin.SimpleListFilter):
+    title = 'has any documents'
+    parameter_name = 'has_any_documents'
+
+    def lookups(self, request, model_admin):
+        return (
+            ('yes', 'Has any documents (> 0)'),
+            ('no', 'No documents at all (= 0)'),
+        )
+
+    def queryset(self, request, queryset):
+        if self.value() == 'yes':
+            return queryset.annotate(
+                total_docs=Count('salesorder') + Count('purchaseorder') + Count('invoice') + Count('vendorbill') + Count('receipt')
+            ).filter(total_docs__gt=0)
+        if self.value() == 'no':
+            return queryset.annotate(
+                total_docs=Count('salesorder') + Count('purchaseorder') + Count('invoice') + Count('vendorbill') + Count('receipt')
+            ).filter(total_docs=0)
 
 
 @admin.register(models.User)
@@ -174,12 +282,286 @@ class BusinessPartnerLocationInline(admin.TabularInline):
         }
 
 
+# Document inlines for Business Partner
+class SalesOrderInline(admin.TabularInline):
+    model = None  # Will be set dynamically
+    extra = 0
+    fields = ('document_link', 'date_ordered', 'doc_status', 'grand_total_display', 'contact_display')
+    readonly_fields = ('document_link', 'date_ordered', 'doc_status', 'grand_total_display', 'contact_display')
+    can_delete = False
+    show_change_link = False
+    verbose_name = "Sales Order"
+    verbose_name_plural = "Sales Orders"
+    template = 'admin/core/document_inline.html'
+    
+    def __init__(self, *args, **kwargs):
+        # Import here to avoid circular imports
+        from sales.models import SalesOrder
+        self.model = SalesOrder
+        super().__init__(*args, **kwargs)
+    
+    def has_add_permission(self, request, obj=None):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return False
+    
+    def get_queryset(self, request):
+        """Only show sales orders with optimized queries"""
+        qs = super().get_queryset(request)
+        return qs.select_related('contact').order_by('-date_ordered')
+    
+    def document_link(self, obj):
+        if obj.pk:
+            from django.urls import reverse
+            from django.utils.html import format_html
+            url = reverse('admin:sales_salesorder_change', args=[obj.pk])
+            return format_html('<a href="{}" target="_blank"><strong>{}</strong></a>', url, obj.document_no)
+        return obj.document_no
+    document_link.short_description = 'Document #'
+    
+    def grand_total_display(self, obj):
+        return f"{obj.grand_total}" if obj.grand_total else '-'
+    grand_total_display.short_description = 'Total'
+    
+    def contact_display(self, obj):
+        return obj.contact.name if obj.contact else '-'
+    contact_display.short_description = 'Contact'
+
+
+class PurchaseOrderInline(admin.TabularInline):
+    model = None  # Will be set dynamically
+    fk_name = 'business_partner'  # Specify which FK to use (main vendor, not ship_to_customer)
+    extra = 0
+    fields = ('document_link', 'date_ordered', 'doc_status', 'grand_total_display', 'contact_display')
+    readonly_fields = ('document_link', 'date_ordered', 'doc_status', 'grand_total_display', 'contact_display')
+    can_delete = False
+    show_change_link = False
+    verbose_name = "Purchase Order"
+    verbose_name_plural = "Purchase Orders"
+    template = 'admin/core/document_inline.html'
+    
+    def __init__(self, *args, **kwargs):
+        # Import here to avoid circular imports
+        from purchasing.models import PurchaseOrder
+        self.model = PurchaseOrder
+        super().__init__(*args, **kwargs)
+    
+    def has_add_permission(self, request, obj=None):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return False
+    
+    def get_queryset(self, request):
+        """Only show purchase orders with optimized queries"""
+        qs = super().get_queryset(request)
+        return qs.select_related('contact').order_by('-date_ordered')
+    
+    def document_link(self, obj):
+        if obj.pk:
+            from django.urls import reverse
+            from django.utils.html import format_html
+            url = reverse('admin:purchasing_purchaseorder_change', args=[obj.pk])
+            return format_html('<a href="{}" target="_blank"><strong>{}</strong></a>', url, obj.document_no)
+        return obj.document_no
+    document_link.short_description = 'Document #'
+    
+    def grand_total_display(self, obj):
+        return f"{obj.grand_total}" if obj.grand_total else '-'
+    grand_total_display.short_description = 'Total'
+    
+    def contact_display(self, obj):
+        return obj.contact.name if obj.contact else '-'
+    contact_display.short_description = 'Contact'
+
+
+class InvoiceInline(admin.TabularInline):
+    model = None  # Will be set dynamically
+    extra = 0
+    fields = ('document_link', 'date_invoiced', 'doc_status', 'grand_total_display', 'open_amount_display', 'contact_display')
+    readonly_fields = ('document_link', 'date_invoiced', 'doc_status', 'grand_total_display', 'open_amount_display', 'contact_display')
+    can_delete = False
+    show_change_link = False
+    verbose_name = "Invoice"
+    verbose_name_plural = "Invoices"
+    template = 'admin/core/document_inline.html'
+    
+    def __init__(self, *args, **kwargs):
+        # Import here to avoid circular imports
+        from sales.models import Invoice
+        self.model = Invoice
+        super().__init__(*args, **kwargs)
+    
+    def has_add_permission(self, request, obj=None):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return False
+    
+    def get_queryset(self, request):
+        """Only show invoices with optimized queries"""
+        qs = super().get_queryset(request)
+        return qs.select_related('contact').order_by('-date_invoiced')
+    
+    def document_link(self, obj):
+        if obj.pk:
+            from django.urls import reverse
+            from django.utils.html import format_html
+            url = reverse('admin:sales_invoice_change', args=[obj.pk])
+            return format_html('<a href="{}" target="_blank"><strong>{}</strong></a>', url, obj.document_no)
+        return obj.document_no
+    document_link.short_description = 'Document #'
+    
+    def grand_total_display(self, obj):
+        return f"{obj.grand_total}" if obj.grand_total else '-'
+    grand_total_display.short_description = 'Total'
+    
+    def open_amount_display(self, obj):
+        return f"{obj.open_amount}" if obj.open_amount else '-'
+    open_amount_display.short_description = 'Balance'
+    
+    def contact_display(self, obj):
+        return obj.contact.name if obj.contact else '-'
+    contact_display.short_description = 'Contact'
+
+
+class VendorBillInline(admin.TabularInline):
+    model = None  # Will be set dynamically
+    extra = 0
+    fields = ('document_link', 'date_invoiced', 'doc_status', 'grand_total_display', 'open_amount_display')
+    readonly_fields = ('document_link', 'date_invoiced', 'doc_status', 'grand_total_display', 'open_amount_display')
+    can_delete = False
+    show_change_link = False
+    verbose_name = "Vendor Bill"
+    verbose_name_plural = "Vendor Bills"
+    template = 'admin/core/document_inline.html'
+    
+    def __init__(self, *args, **kwargs):
+        # Import here to avoid circular imports
+        from purchasing.models import VendorBill
+        self.model = VendorBill
+        super().__init__(*args, **kwargs)
+    
+    def has_add_permission(self, request, obj=None):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return False
+    
+    def get_queryset(self, request):
+        """Only show vendor bills with optimized queries"""
+        qs = super().get_queryset(request)
+        return qs.order_by('-date_invoiced')  # VendorBill has no contact field
+    
+    def document_link(self, obj):
+        if obj.pk:
+            from django.urls import reverse
+            from django.utils.html import format_html
+            url = reverse('admin:purchasing_vendorbill_change', args=[obj.pk])
+            return format_html('<a href="{}" target="_blank"><strong>{}</strong></a>', url, obj.document_no)
+        return obj.document_no
+    document_link.short_description = 'Document #'
+    
+    def grand_total_display(self, obj):
+        return f"{obj.grand_total}" if obj.grand_total else '-'
+    grand_total_display.short_description = 'Total'
+    
+    def open_amount_display(self, obj):
+        return f"{obj.open_amount}" if obj.open_amount else '-'
+    open_amount_display.short_description = 'Balance'
+    
+    def contact_display(self, obj):
+        return '-'  # VendorBill model has no contact field
+    contact_display.short_description = 'Contact'
+
+
+class ReceiptInline(admin.TabularInline):
+    model = None  # Will be set dynamically
+    extra = 0
+    fields = ('document_link', 'movement_date', 'doc_status', 'warehouse_display')
+    readonly_fields = ('document_link', 'movement_date', 'doc_status', 'warehouse_display')
+    can_delete = False
+    show_change_link = False
+    verbose_name = "Receipt"
+    verbose_name_plural = "Receipts"
+    template = 'admin/core/document_inline.html'
+    
+    def __init__(self, *args, **kwargs):
+        # Import here to avoid circular imports
+        from purchasing.models import Receipt
+        self.model = Receipt
+        super().__init__(*args, **kwargs)
+    
+    def has_add_permission(self, request, obj=None):
+        return False
+    
+    def has_change_permission(self, request, obj=None):
+        return False
+    
+    def get_queryset(self, request):
+        """Only show receipts with optimized queries"""
+        qs = super().get_queryset(request)
+        return qs.select_related('warehouse').order_by('-movement_date')  # Receipt has no contact field
+    
+    def document_link(self, obj):
+        if obj.pk:
+            from django.urls import reverse
+            from django.utils.html import format_html
+            url = reverse('admin:purchasing_receipt_change', args=[obj.pk])
+            return format_html('<a href="{}" target="_blank"><strong>{}</strong></a>', url, obj.document_no)
+        return obj.document_no
+    document_link.short_description = 'Document #'
+    
+    def contact_display(self, obj):
+        return '-'  # Receipt model has no contact field
+    contact_display.short_description = 'Contact'
+    
+    def warehouse_display(self, obj):
+        return obj.warehouse.name if obj.warehouse else '-'
+    warehouse_display.short_description = 'Warehouse'
+    
+    class Media:
+        css = {
+            'all': ('admin/css/custom_inline.css',)
+        }
+
+
 @admin.register(models.BusinessPartner)
 class BusinessPartnerAdmin(admin.ModelAdmin):
-    list_display = ('code', 'name', 'partner_type', 'email', 'phone', 'contact_count', 'location_count', 'is_active')
-    list_filter = ('partner_type', 'is_customer', 'is_vendor', 'is_tax_exempt', 'is_active')
+    list_display = ('code', 'name', 'partner_type', 'email', 'phone', 'contact_count', 'location_count', 'sales_order_count', 'purchase_order_count', 'invoice_count', 'vendor_bill_count', 'receipt_count', 'is_orphan', 'is_active')
+    list_filter = (
+        'partner_type', 'is_customer', 'is_vendor', 'is_tax_exempt', 'is_orphan', 'is_active',
+        HasSalesOrdersFilter, HasPurchaseOrdersFilter, HasInvoicesFilter, 
+        HasVendorBillsFilter, HasReceiptsFilter, HasAnyDocumentsFilter
+    )
     search_fields = ('code', 'name', 'email', 'tax_id')
-    inlines = [ContactInline, BusinessPartnerLocationInline]
+    inlines = [ContactInline, BusinessPartnerLocationInline, SalesOrderInline, PurchaseOrderInline, InvoiceInline, VendorBillInline, ReceiptInline]
+    
+    def get_inline_instances(self, request, obj=None):
+        """Only show relevant document inlines based on business partner type"""
+        inline_instances = []
+        
+        # Always show contact and location inlines
+        for inline_class in [ContactInline, BusinessPartnerLocationInline]:
+            inline_instances.append(inline_class(self.model, self.admin_site))
+        
+        if obj:
+            # Show sales-related documents for customers
+            if obj.is_customer:
+                for inline_class in [SalesOrderInline, InvoiceInline]:
+                    inline_instances.append(inline_class(self.model, self.admin_site))
+            
+            # Show purchase-related documents for vendors
+            if obj.is_vendor:
+                for inline_class in [PurchaseOrderInline, VendorBillInline, ReceiptInline]:
+                    inline_instances.append(inline_class(self.model, self.admin_site))
+        else:
+            # When adding new business partner, show all inlines
+            for inline_class in [SalesOrderInline, PurchaseOrderInline, InvoiceInline, VendorBillInline, ReceiptInline]:
+                inline_instances.append(inline_class(self.model, self.admin_site))
+        
+        return inline_instances
     fieldsets = (
         ('Basic Information', {
             'fields': ('code', 'name', 'name2', 'partner_type')
@@ -193,6 +575,10 @@ class BusinessPartnerAdmin(admin.ModelAdmin):
         ('Flags', {
             'fields': ('is_customer', 'is_vendor', 'is_employee', 'is_prospect')
         }),
+        ('Data Quality', {
+            'fields': ('is_orphan',),
+            'description': 'Business partners marked as orphan have no locations or related documents and are candidates for deletion'
+        }),
     )
     readonly_fields = ('code', 'is_customer', 'is_vendor', 'is_employee', 'is_prospect')
     
@@ -205,6 +591,56 @@ class BusinessPartnerAdmin(admin.ModelAdmin):
         """Display number of locations for this business partner"""
         return obj.locations.count()
     location_count.short_description = 'Locations'
+    
+    def sales_order_count(self, obj):
+        """Display number of sales orders for this business partner"""
+        if hasattr(obj, 'sales_order_count'):
+            return obj.sales_order_count
+        return obj.salesorder_set.count()
+    sales_order_count.short_description = 'Sales Orders'
+    
+    def purchase_order_count(self, obj):
+        """Display number of purchase orders for this business partner"""
+        if hasattr(obj, 'purchase_order_count'):
+            return obj.purchase_order_count
+        return obj.purchaseorder_set.count()
+    purchase_order_count.short_description = 'Purchase Orders'
+    
+    def invoice_count(self, obj):
+        """Display number of invoices for this business partner"""
+        if hasattr(obj, 'invoice_count'):
+            return obj.invoice_count
+        return obj.invoice_set.count()
+    invoice_count.short_description = 'Invoices'
+    
+    def vendor_bill_count(self, obj):
+        """Display number of vendor bills for this business partner"""
+        if hasattr(obj, 'vendor_bill_count'):
+            return obj.vendor_bill_count
+        return obj.vendorbill_set.count()
+    vendor_bill_count.short_description = 'Vendor Bills'
+    
+    def receipt_count(self, obj):
+        """Display number of receipts for this business partner"""
+        if hasattr(obj, 'receipt_count'):
+            return obj.receipt_count
+        return obj.receipt_set.count()
+    receipt_count.short_description = 'Receipts'
+    
+    def get_queryset(self, request):
+        """Optimize queries with document counts"""
+        queryset = super().get_queryset(request)
+        
+        # Prefetch related objects and add document counts
+        return queryset.prefetch_related(
+            'contacts', 'locations'
+        ).annotate(
+            sales_order_count=Count('salesorder', distinct=True),
+            purchase_order_count=Count('purchaseorder', distinct=True),
+            invoice_count=Count('invoice', distinct=True),
+            vendor_bill_count=Count('vendorbill', distinct=True),
+            receipt_count=Count('receipt', distinct=True)
+        )
 
 
 @admin.register(models.Currency)

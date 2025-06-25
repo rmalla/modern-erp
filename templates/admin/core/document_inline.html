@@ -1,0 +1,131 @@
+{% extends "admin/edit_inline/tabular.html" %}
+{% load admin_urls %}
+
+{% block inline_content %}
+<div class="tabular inline-group" id="{{ inline_admin_formset.formset.prefix }}-group">
+    <h2>{{ inline_admin_formset.opts.verbose_name_plural|capfirst }}</h2>
+    
+    {% if inline_admin_formset.formset.forms %}
+        <div class="table-responsive">
+            <table class="table table-striped table-hover">
+                <thead>
+                    <tr>
+                        {% for field in inline_admin_formset.fields %}
+                            <th scope="col" class="{% if field.field.name in 'document_link' %}document-link{% endif %}">
+                                {{ field.label|capfirst }}
+                            </th>
+                        {% endfor %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for inline_admin_form in inline_admin_formset %}
+                        <tr class="{% cycle 'row1' 'row2' %}">
+                            {% for fieldset in inline_admin_form %}
+                                {% for line in fieldset %}
+                                    {% for field in line %}
+                                        <td class="{% if field.field.name == 'document_link' %}document-link{% elif field.field.name == 'doc_status' %}status-cell{% elif field.field.name|slice:'-8:' == '_display' %}currency-cell{% endif %}">
+                                            {% if field.is_readonly %}
+                                                {{ field.contents|safe }}
+                                            {% else %}
+                                                {{ field.field }}
+                                            {% endif %}
+                                        </td>
+                                    {% endfor %}
+                                {% endfor %}
+                            {% endfor %}
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <div class="empty-documents">
+            <p class="text-muted">No {{ inline_admin_formset.opts.verbose_name_plural|lower }} found for this business partner.</p>
+        </div>
+    {% endif %}
+</div>
+
+<style>
+.document-inline .tabular {
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    margin-bottom: 20px;
+    background: #fff;
+}
+
+.document-inline h2 {
+    background: #f8f9fa;
+    margin: 0;
+    padding: 12px 15px;
+    border-bottom: 1px solid #ddd;
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+}
+
+.document-inline .table {
+    margin-bottom: 0;
+    font-size: 13px;
+}
+
+.document-inline .table th {
+    background: #f8f9fa;
+    border-top: none;
+    font-weight: 600;
+    color: #555;
+    padding: 8px 12px;
+}
+
+.document-inline .table td {
+    padding: 8px 12px;
+    vertical-align: middle;
+    border-top: 1px solid #eee;
+}
+
+.document-inline .document-link a {
+    font-weight: 600;
+    color: #007cba;
+    text-decoration: none;
+}
+
+.document-inline .document-link a:hover {
+    color: #005a87;
+    text-decoration: underline;
+}
+
+.document-inline .status-cell {
+    text-transform: capitalize;
+    font-weight: 500;
+}
+
+.document-inline .currency-cell {
+    text-align: right;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+}
+
+.document-inline .empty-documents {
+    padding: 20px;
+    text-align: center;
+    background: #f8f9fa;
+    border-top: 1px solid #ddd;
+}
+
+.document-inline .text-muted {
+    color: #6c757d;
+    font-style: italic;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+    .document-inline .table-responsive {
+        border: none;
+    }
+    
+    .document-inline .table th,
+    .document-inline .table td {
+        padding: 6px 8px;
+        font-size: 12px;
+    }
+}
+</style>
+{% endblock %}
